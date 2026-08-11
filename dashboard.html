@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart SIEM — E-Commerce Threat Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0B0F14;
+    --panel: #121821;
+    --panel-hover: #161E29;
+    --border: #1E2733;
+    --text: #E6EDF3;
+    --text-muted: #7C8B9C;
+    --text-dim: #4A5A6B;
+    --accent: #2DD4BF;
+    --accent-dim: rgba(45, 212, 191, 0.12);
+    --low: #34D399;
+    --medium: #EAC54F;
+    --high: #F5A623;
+    --critical: #F0465B;
+    --font-mono: 'IBM Plex Mono', monospace;
+    --font-body: 'Inter', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    display: flex;
+    min-height: 100vh;
+    font-size: 14px;
+  }
+
+  /* ===== Sidebar ===== */
+  .sidebar {
+    width: 220px;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .brand {
+    padding: 20px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .brand-title {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+    color: var(--text);
+  }
+
+  .brand-sub {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 3px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    box-shadow: none;
+    transition: all 0.3s ease;
+  }
+
+  .status-dot.live {
+    background: var(--accent);
+    box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.6);
+    animation: pulse 2s infinite;
+  }
+
+  .status-dot.offline { background: var(--critical); }
+
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.5); }
+    70% { box-shadow: 0 0 0 6px rgba(45, 212, 191, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(45, 212, 191, 0); }
+  }
+
+  .status-label { color: var(--text-muted); }
+  .status-label.live-text { color: var(--accent); }
+  .status-label.offline-text { color: var(--critical); }
+
+  nav { flex: 1; padding: 10px 0; }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 18px;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    border-left: 2px solid transparent;
+    transition: all 0.15s ease;
+  }
+
+  .nav-item:hover { background: var(--panel-hover); color: var(--text); }
+
+  .nav-item.active {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-left: 2px solid var(--accent);
+  }
+
+  .nav-icon { font-family: var(--font-mono); font-size: 12px; width: 16px; text-align: center; }
+
+  .sidebar-footer {
+    padding: 14px 18px;
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    line-height: 1.6;
+  }
+
+  /* ===== Main ===== */
+  .main { flex: 1; padding: 28px 32px; overflow-y: auto; max-height: 100vh; }
+
+  .page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    margin-bottom: 24px;
+  }
+
+  .page-title { font-size: 22px; font-weight: 700; }
+  .page-sub { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+
+  .refresh-btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 7px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    letter-spacing: 0.03em;
+    transition: all 0.15s ease;
+  }
+  .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* KPI cards */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+
+  .kpi-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+  }
+
+  .kpi-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+  }
+
+  .kpi-value {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    font-weight: 600;
+  }
+
+  .kpi-value.critical { color: var(--critical); }
+  .kpi-value.high { color: var(--high); }
+  .kpi-value.accent { color: var(--accent); }
+
+  /* Panels */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+
+  .panel-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; }
+
+  th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  td {
+    padding: 10px 10px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12.5px;
+    color: var(--text);
+  }
+
+  tr:hover td { background: var(--panel-hover); }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .badge.low { background: rgba(52, 211, 153, 0.12); color: var(--low); }
+  .badge.medium { background: rgba(234, 197, 79, 0.12); color: var(--medium); }
+  .badge.high { background: rgba(245, 166, 35, 0.12); color: var(--high); }
+  .badge.critical { background: rgba(240, 70, 91, 0.12); color: var(--critical); }
+
+  .empty-state {
+    text-align: center;
+    padding: 48px 20px;
+    color: var(--text-dim);
+  }
+
+  .empty-state .empty-icon { font-family: var(--font-mono); font-size: 22px; margin-bottom: 10px; color: var(--text-dim); }
+  .empty-state .empty-title { color: var(--text-muted); font-weight: 600; margin-bottom: 4px; font-size: 13px; }
+  .empty-state .empty-sub { font-size: 12px; }
+
+  .filter-row { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+
+  .filter-row input, .filter-row select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 10px;
+    border-radius: 5px;
+    font-family: var(--font-body);
+    font-size: 12px;
+  }
+  .filter-row input:focus, .filter-row select:focus { outline: none; border-color: var(--accent); }
+
+  .pagination { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
+  .pagination button {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 6px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .pagination button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .pagination button:disabled { opacity: 0.35; cursor: not-allowed; }
+  .pagination .page-info { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+
+  .chart-wrap { position: relative; height: 220px; }
+
+  .two-col { display: grid; grid-template-columns: 1.3fr 1fr; gap: 20px; }
+  @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .loading-row td { color: var(--text-dim); font-family: var(--font-mono); font-size: 11px; text-align: center; padding: 20px; }
+
+  code.inline {
+    font-family: var(--font-mono);
+    background: var(--bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .note-banner {
+    background: rgba(234, 197, 79, 0.08);
+    border: 1px solid rgba(234, 197, 79, 0.25);
+    color: var(--medium);
+    font-size: 12px;
+    padding: 10px 14px;
+    border-radius: 6px;
+    margin-bottom: 18px;
+  }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="brand">
+    <div class="brand-title">SMART SIEM</div>
+    <div class="brand-sub">E-Commerce Threat Console</div>
+  </div>
+  <div class="status-row">
+    <div class="status-dot" id="statusDot"></div>
+    <span class="status-label" id="statusLabel">Connecting…</span>
+  </div>
+  <div class="status-row" style="cursor: pointer;" id="pollToggleRow" onclick="togglePolling()">
+    <div class="status-dot" id="pollDot"></div>
+    <span class="status-label" id="pollLabel">Auto-refresh: ON</span>
+  </div>
+  <nav id="navList">
+    <div class="nav-item active" data-tab="overview"><span class="nav-icon">◆</span>Overview</div>
+    <div class="nav-item" data-tab="threats"><span class="nav-icon">▲</span>Threats</div>
+    <div class="nav-item" data-tab="fraud"><span class="nav-icon">$</span>Fraud</div>
+    <div class="nav-item" data-tab="user-behavior"><span class="nav-icon">◉</span>User Behavior</div>
+    <div class="nav-item" data-tab="admin-activity"><span class="nav-icon">⚙</span>Admin Activity</div>
+    <div class="nav-item" data-tab="ai-insights"><span class="nav-icon">✦</span>AI Insights</div>
+    <div class="nav-item" data-tab="logs"><span class="nav-icon">≡</span>Logs</div>
+  </nav>
+  <div class="sidebar-footer">
+    API: <span id="apiBaseLabel">localhost:8000</span><br>
+    Smart SIEM v0.1
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- OVERVIEW -->
+  <div class="tab-content active" id="tab-overview">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Overview</div>
+        <div class="page-sub">Real-time system-wide security posture</div>
+      </div>
+      <button class="refresh-btn" onclick="loadOverview()">↻ REFRESH</button>
+    </div>
+
+    <div class="kpi-grid" id="overviewKpis">
+      <div class="kpi-card"><div class="kpi-label">Total Events</div><div class="kpi-value">—</div></div>
+      <div class="kpi-card"><div class="kpi-label">Critical Events</div><div class="kpi-value critical">—</div></div>
+      <div class="kpi-card"><div class="kpi-label">High Severity</div><div class="kpi-value high">—</div></div>
+      <div class="kpi-card"><div class="kpi-label">Anomalies Flagged</div><div class="kpi-value accent">—</div></div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-title">Events by Category</div>
+        <div class="chart-wrap"><canvas id="categoryChart"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Category Breakdown</div>
+        <table id="categoryTable">
+          <thead><tr><th>Category</th><th>Count</th></tr></thead>
+          <tbody><tr class="loading-row"><td colspan="2">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- THREATS -->
+  <div class="tab-content" id="tab-threats">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Threats</div>
+        <div class="page-sub">Real-time security events flagged by the detection engine</div>
+      </div>
+      <button class="refresh-btn" onclick="loadThreats()">↻ REFRESH</button>
+    </div>
+    <div class="panel">
+      <div class="filter-row">
+        <label style="display:flex; align-items:center; gap:6px; color:var(--text-muted); font-size:12px;">
+          <input type="checkbox" id="threatsAnomalyOnly" checked onchange="loadThreats()"> Anomalies only
+        </label>
+      </div>
+      <table>
+        <thead><tr><th>Timestamp</th><th>IP</th><th>Event Type</th><th>Severity</th><th>Risk Score</th><th>Reason</th></tr></thead>
+        <tbody id="threatsBody"><tr class="loading-row"><td colspan="6">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- FRAUD -->
+  <div class="tab-content" id="tab-fraud">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Fraud Detection</div>
+        <div class="page-sub">Transaction &amp; payment anomaly monitoring</div>
+      </div>
+      <button class="refresh-btn" onclick="loadFraud()">↻ REFRESH</button>
+    </div>
+    <div class="note-banner">
+      Live scoring here is rule-based (flags transactions ≥ a configurable amount). The trained Autoencoder is evaluated offline against the credit-card fraud dataset — see the Evaluation Framework section of the report for those metrics.
+    </div>
+    <div class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom:18px;">
+      <div class="kpi-card"><div class="kpi-label">Flagged Transactions</div><div class="kpi-value" id="fraudCount">—</div></div>
+      <div class="kpi-card"><div class="kpi-label">Total Flagged Amount</div><div class="kpi-value accent" id="fraudAmount">—</div></div>
+    </div>
+    <div class="panel">
+      <div class="filter-row">
+        <input type="number" id="fraudMinAmount" placeholder="Min amount ($)" oninput="loadFraud()">
+      </div>
+      <table>
+        <thead><tr><th>Timestamp</th><th>User</th><th>IP</th><th>Amount</th><th>Risk Score</th><th>Reason</th></tr></thead>
+        <tbody id="fraudBody"><tr class="loading-row"><td colspan="6">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- USER BEHAVIOR -->
+  <div class="tab-content" id="tab-user-behavior">
+    <div class="page-header">
+      <div>
+        <div class="page-title">User Behavior</div>
+        <div class="page-sub">Customer &amp; account activity analytics</div>
+      </div>
+      <button class="refresh-btn" onclick="loadUserBehavior()">↻ REFRESH</button>
+    </div>
+    <div class="panel">
+      <div class="filter-row">
+        <input type="text" id="userBehaviorFilter" placeholder="Filter by user ID…" oninput="loadUserBehavior()">
+      </div>
+      <table>
+        <thead><tr><th>Timestamp</th><th>User ID</th><th>IP</th><th>Event Type</th><th>Severity</th></tr></thead>
+        <tbody id="userBehaviorBody"><tr class="loading-row"><td colspan="5">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ADMIN ACTIVITY -->
+  <div class="tab-content" id="tab-admin-activity">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Admin Activity</div>
+        <div class="page-sub">Internal &amp; insider misuse monitoring</div>
+      </div>
+      <button class="refresh-btn" onclick="loadAdminActivity()">↻ REFRESH</button>
+    </div>
+    <div class="panel">
+      <table>
+        <thead><tr><th>Timestamp</th><th>Admin User</th><th>IP</th><th>Event Type</th><th>Severity</th></tr></thead>
+        <tbody id="adminActivityBody"><tr class="loading-row"><td colspan="5">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- AI INSIGHTS -->
+  <div class="tab-content" id="tab-ai-insights">
+    <div class="page-header">
+      <div>
+        <div class="page-title">AI Insights</div>
+        <div class="page-sub">AI-generated threat intelligence &amp; explanations</div>
+      </div>
+      <button class="refresh-btn" onclick="loadAiInsights()">↻ REFRESH</button>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Summary</div>
+      <p id="aiInsightsSummary" style="color: var(--text-muted); font-size: 13px; line-height: 1.6;">Loading…</p>
+    </div>
+    <div class="panel" id="aiTopRisksPanel" style="display:none;">
+      <div class="panel-title">Top Risks</div>
+      <div id="aiTopRisksList"></div>
+    </div>
+  </div>
+
+  <!-- LOGS -->
+  <div class="tab-content" id="tab-logs">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Logs</div>
+        <div class="page-sub">Full event log — search, filter, and page through raw records</div>
+      </div>
+      <button class="refresh-btn" onclick="loadLogs()">↻ REFRESH</button>
+    </div>
+    <div class="panel">
+      <div class="filter-row">
+        <input type="text" id="logsSearch" placeholder="Search…" oninput="debouncedLogsSearch()">
+        <input type="text" id="logsEventType" placeholder="Event type" oninput="debouncedLogsSearch()">
+        <select id="logsSeverity" onchange="loadLogs()">
+          <option value="">All severities</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+      </div>
+      <table>
+        <thead><tr><th>Timestamp</th><th>IP</th><th>Event Type</th><th>Severity</th></tr></thead>
+        <tbody id="logsBody"><tr class="loading-row"><td colspan="4">Loading…</td></tr></tbody>
+      </table>
+      <div class="pagination">
+        <button id="logsPrevBtn" onclick="changeLogsPage(-1)">← Prev</button>
+        <span class="page-info" id="logsPageInfo">Page 1</span>
+        <button id="logsNextBtn" onclick="changeLogsPage(1)">Next →</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API_BASE = "http://localhost:8000";
+document.getElementById('apiBaseLabel').textContent = API_BASE.replace(/^https?:\/\//, '');
+
+let categoryChart = null;
+let logsState = { page: 1, page_size: 25, total_pages: 1 };
+let logsDebounceTimer = null;
+
+// ===== Tab switching =====
+let activeTab = 'overview';
+
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    item.classList.add('active');
+    const tabId = 'tab-' + item.dataset.tab;
+    document.getElementById(tabId).classList.add('active');
+    activeTab = item.dataset.tab;
+    loadTabData(activeTab);
+  });
+});
+
+// ===== Auto-refresh polling =====
+// Re-fetches whichever tab is currently active, on a timer, so new
+// events (e.g. sent via POST /detect) show up without a manual refresh.
+const POLL_INTERVAL_MS = 8000;
+let pollingEnabled = true;
+let pollTimer = null;
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(() => {
+    if (pollingEnabled) loadTabData(activeTab);
+  }, POLL_INTERVAL_MS);
+}
+
+function togglePolling() {
+  pollingEnabled = !pollingEnabled;
+  const dot = document.getElementById('pollDot');
+  const label = document.getElementById('pollLabel');
+  if (pollingEnabled) {
+    dot.className = 'status-dot live';
+    label.textContent = 'Auto-refresh: ON';
+    label.className = 'status-label live-text';
+    loadTabData(activeTab); // immediate refresh when turned back on
+  } else {
+    dot.className = 'status-dot';
+    label.textContent = 'Auto-refresh: OFF';
+    label.className = 'status-label';
+  }
+}
+
+function loadTabData(tab) {
+  switch (tab) {
+    case 'overview': loadOverview(); break;
+    case 'threats': loadThreats(); break;
+    case 'fraud': loadFraud(); break;
+    case 'user-behavior': loadUserBehavior(); break;
+    case 'admin-activity': loadAdminActivity(); break;
+    case 'ai-insights': loadAiInsights(); break;
+    case 'logs': loadLogs(); break;
+  }
+}
+
+// ===== Connection status =====
+async function checkStatus() {
+  const dot = document.getElementById('statusDot');
+  const label = document.getElementById('statusLabel');
+  try {
+    const res = await fetch(`${API_BASE}/`);
+    if (!res.ok) throw new Error();
+    dot.className = 'status-dot live';
+    label.textContent = 'LIVE';
+    label.className = 'status-label live-text';
+  } catch (e) {
+    dot.className = 'status-dot offline';
+    label.textContent = 'OFFLINE';
+    label.className = 'status-label offline-text';
+  }
+}
+
+async function apiGet(path) {
+  const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+  return res.json();
+}
+
+function severityBadge(sev) {
+  const level = (sev || 'low').toLowerCase();
+  const map = { low: 'low', medium: 'medium', high: 'high', critical: 'critical' };
+  const cls = map[level] || 'low';
+  return `<span class="badge ${cls}">${level}</span>`;
+}
+
+function emptyRow(colspan, title, sub) {
+  return `<tr><td colspan="${colspan}">
+    <div class="empty-state">
+      <div class="empty-icon">∅</div>
+      <div class="empty-title">${title}</div>
+      <div class="empty-sub">${sub}</div>
+    </div>
+  </td></tr>`;
+}
+
+function errorRow(colspan, msg) {
+  return `<tr><td colspan="${colspan}">
+    <div class="empty-state">
+      <div class="empty-icon" style="color:var(--critical);">!</div>
+      <div class="empty-title" style="color:var(--critical);">Couldn't load data</div>
+      <div class="empty-sub">${msg}</div>
+    </div>
+  </td></tr>`;
+}
+
+// ===== Overview =====
+async function loadOverview() {
+  try {
+    const data = await apiGet('/overview');
+    const kpiEls = document.querySelectorAll('#overviewKpis .kpi-value');
+    kpiEls[0].textContent = data.total_events ?? 0;
+    kpiEls[1].textContent = data.critical_events ?? 0;
+    kpiEls[2].textContent = data.high_events ?? 0;
+    kpiEls[3].textContent = data.anomalies ?? 0;
+
+    const cats = data.events_by_category || {};
+    const labels = Object.keys(cats);
+    const values = Object.values(cats);
+
+    const tbody = document.querySelector('#categoryTable tbody');
+    if (labels.length === 0) {
+      tbody.innerHTML = emptyRow(2, 'No events yet', 'Send some events to /detect to populate this.');
+    } else {
+      tbody.innerHTML = labels.map((l, i) =>
+        `<tr><td style="text-transform:capitalize;">${l.replace('_',' ')}</td><td>${values[i]}</td></tr>`
+      ).join('');
+    }
+
+    renderCategoryChart(labels, values);
+  } catch (e) {
+    document.querySelector('#categoryTable tbody').innerHTML = errorRow(2, e.message);
+  }
+}
+
+function renderCategoryChart(labels, values) {
+  const ctx = document.getElementById('categoryChart');
+  if (categoryChart) categoryChart.destroy();
+  const colors = ['#2DD4BF', '#F0465B', '#EAC54F', '#F5A623', '#34D399'];
+  categoryChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: labels.length ? labels : ['No data'],
+      datasets: [{
+        data: values.length ? values : [1],
+        backgroundColor: values.length ? colors : ['#1E2733'],
+        borderColor: '#121821',
+        borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#7C8B9C', font: { family: 'IBM Plex Mono', size: 10 }, padding: 12 } }
+      }
+    }
+  });
+}
+
+// ===== Threats =====
+async function loadThreats() {
+  const tbody = document.getElementById('threatsBody');
+  tbody.innerHTML = '<tr class="loading-row"><td colspan="6">Loading…</td></tr>';
+  const anomalyOnly = document.getElementById('threatsAnomalyOnly').checked;
+  try {
+    const data = await apiGet(`/threats?limit=100&anomaly_only=${anomalyOnly}`);
+    const results = data.results || [];
+    if (results.length === 0) {
+      tbody.innerHTML = emptyRow(6, 'No threats detected', 'Threat events will appear here once logged via /detect.');
+      return;
+    }
+    tbody.innerHTML = results.map(r => `
+      <tr>
+        <td>${r.timestamp || '—'}</td>
+        <td><code class="inline">${r.ip || '—'}</code></td>
+        <td>${r.event_type || '—'}</td>
+        <td>${severityBadge(r.risk_level || r.severity)}</td>
+        <td>${r.risk_score ?? '—'}</td>
+        <td style="color:var(--text-muted);">${(r.reason || []).join(', ') || '—'}</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = errorRow(6, e.message);
+  }
+}
+
+// ===== Fraud =====
+async function loadFraud() {
+  const tbody = document.getElementById('fraudBody');
+  tbody.innerHTML = '<tr class="loading-row"><td colspan="6">Loading…</td></tr>';
+  const minAmount = document.getElementById('fraudMinAmount').value;
+  const qs = minAmount ? `?min_amount=${minAmount}` : '';
+  try {
+    const data = await apiGet(`/fraud${qs}`);
+    const results = data.results || [];
+    document.getElementById('fraudCount').textContent = data.count ?? 0;
+    document.getElementById('fraudAmount').textContent = '$' + (data.total_flagged_amount ?? 0).toLocaleString();
+
+    if (results.length === 0) {
+      tbody.innerHTML = emptyRow(6, 'No flagged transactions', 'Transactions above the risk threshold will appear here.');
+      return;
+    }
+    tbody.innerHTML = results.map(r => `
+      <tr>
+        <td>${r.timestamp || '—'}</td>
+        <td>${r.user_id || '—'}</td>
+        <td><code class="inline">${r.ip || '—'}</code></td>
+        <td>${r.amount != null ? '$' + Number(r.amount).toLocaleString() : '—'}</td>
+        <td>${r.risk_score ?? '—'}</td>
+        <td style="color:var(--text-muted);">${(r.reason || []).join(', ') || '—'}</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = errorRow(6, e.message);
+  }
+}
+
+// ===== User Behavior =====
+async function loadUserBehavior() {
+  const tbody = document.getElementById('userBehaviorBody');
+  tbody.innerHTML = '<tr class="loading-row"><td colspan="5">Loading…</td></tr>';
+  const userId = document.getElementById('userBehaviorFilter').value.trim();
+  const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+  try {
+    const data = await apiGet(`/user-behavior${qs}`);
+    const results = data.results || [];
+    if (results.length === 0) {
+      tbody.innerHTML = emptyRow(5, 'No behavior data', 'Customer/account activity events will appear here.');
+      return;
+    }
+    tbody.innerHTML = results.map(r => `
+      <tr>
+        <td>${r.timestamp || '—'}</td>
+        <td>${r.user_id || '—'}</td>
+        <td><code class="inline">${r.ip || '—'}</code></td>
+        <td>${r.event_type || '—'}</td>
+        <td>${severityBadge(r.risk_level || r.severity)}</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = errorRow(5, e.message);
+  }
+}
+
+// ===== Admin Activity =====
+async function loadAdminActivity() {
+  const tbody = document.getElementById('adminActivityBody');
+  tbody.innerHTML = '<tr class="loading-row"><td colspan="5">Loading…</td></tr>';
+  try {
+    const data = await apiGet('/admin-activity');
+    const results = data.results || [];
+    if (results.length === 0) {
+      tbody.innerHTML = emptyRow(5, 'No admin activity', 'Internal/admin events will appear here.');
+      return;
+    }
+    tbody.innerHTML = results.map(r => `
+      <tr>
+        <td>${r.timestamp || '—'}</td>
+        <td>${r.user_id || '—'}</td>
+        <td><code class="inline">${r.ip || '—'}</code></td>
+        <td>${r.event_type || '—'}</td>
+        <td>${severityBadge(r.risk_level || r.severity)}</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = errorRow(5, e.message);
+  }
+}
+
+// ===== AI Insights =====
+async function loadAiInsights() {
+  const summaryEl = document.getElementById('aiInsightsSummary');
+  summaryEl.textContent = 'Loading…';
+  try {
+    const data = await apiGet('/ai-insights');
+    summaryEl.textContent = data.summary || 'No summary available.';
+    const risks = data.top_risks || [];
+    const panel = document.getElementById('aiTopRisksPanel');
+    if (risks.length > 0) {
+      panel.style.display = 'block';
+      document.getElementById('aiTopRisksList').innerHTML = risks.map(r => `<div>${r}</div>`).join('');
+    } else {
+      panel.style.display = 'none';
+    }
+  } catch (e) {
+    summaryEl.textContent = `Couldn't load AI insights: ${e.message}`;
+  }
+}
+
+// ===== Logs =====
+function debouncedLogsSearch() {
+  clearTimeout(logsDebounceTimer);
+  logsDebounceTimer = setTimeout(() => { logsState.page = 1; loadLogs(); }, 350);
+}
+
+async function loadLogs() {
+  const tbody = document.getElementById('logsBody');
+  tbody.innerHTML = '<tr class="loading-row"><td colspan="4">Loading…</td></tr>';
+
+  const search = document.getElementById('logsSearch').value.trim();
+  const eventType = document.getElementById('logsEventType').value.trim();
+  const severity = document.getElementById('logsSeverity').value;
+
+  const params = new URLSearchParams({
+    page: logsState.page,
+    page_size: logsState.page_size,
+  });
+  if (search) params.set('search', search);
+  if (eventType) params.set('event_type', eventType);
+  if (severity) params.set('severity', severity);
+
+  try {
+    const data = await apiGet(`/logs?${params.toString()}`);
+    const results = data.results || [];
+    logsState.total_pages = data.total_pages || 1;
+
+    if (results.length === 0) {
+      tbody.innerHTML = emptyRow(4, 'No logs found', 'Try adjusting filters, or check that events have been ingested.');
+    } else {
+      tbody.innerHTML = results.map(r => `
+        <tr>
+          <td>${r.timestamp || '—'}</td>
+          <td><code class="inline">${r.ip || '—'}</code></td>
+          <td>${r.event_type || '—'}</td>
+          <td>${severityBadge(r.severity)}</td>
+        </tr>
+      `).join('');
+    }
+
+    document.getElementById('logsPageInfo').textContent = `Page ${data.page || 1} of ${data.total_pages || 1} (${data.total ?? 0} total)`;
+    document.getElementById('logsPrevBtn').disabled = (data.page || 1) <= 1;
+    document.getElementById('logsNextBtn').disabled = (data.page || 1) >= (data.total_pages || 1);
+  } catch (e) {
+    tbody.innerHTML = errorRow(4, e.message);
+  }
+}
+
+function changeLogsPage(delta) {
+  const newPage = logsState.page + delta;
+  if (newPage < 1 || newPage > logsState.total_pages) return;
+  logsState.page = newPage;
+  loadLogs();
+}
+
+// ===== Init =====
+checkStatus();
+setInterval(checkStatus, 15000);
+loadOverview();
+document.getElementById('pollDot').className = 'status-dot live';
+document.getElementById('pollLabel').className = 'status-label live-text';
+startPolling();
+</script>
+
+</body>
+</html>
