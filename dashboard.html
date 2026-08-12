@@ -594,18 +594,28 @@
     background: var(--theme-row-hover);
   }
 
+  .brand-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
   .theme-toggle {
-    width: 100%;
-    margin-top: 12px;
-    padding: 9px 12px;
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
     border: 1px solid var(--theme-border);
-    border-radius: 4px;
+    border-radius: 50%;
     background: var(--theme-panel-hover);
     color: var(--theme-text);
     cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    text-align: left;
+    font-size: 13px;
+    line-height: 1;
   }
 
   .theme-toggle:hover {
@@ -615,17 +625,41 @@
 
   .theme-icon {
     display: inline-block;
-    width: 20px;
   }
 
+  /* ===== Mobile nav toggle + drawer backdrop (hidden on desktop) ===== */
+  .mobile-nav-toggle {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--theme-panel);
+    color: var(--theme-text);
+    border: none;
+    border-bottom: 1px solid var(--theme-border);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+  }
+
+  .sidebar-backdrop {
+    display: none;
+  }
+
+  /* ===== Light mode: bring components that used hardcoded dark-only
+     colors onto the shared theme so light mode is fully designed,
+     not just an inverted background. ===== */
   body.light-mode .nav-item:hover {
     background: #EEF1F3;
     color: #25282B;
   }
 
   body.light-mode .nav-item.active {
-    background: rgba(101, 166, 55, .10);
-    color: #4E8528;
+    background: rgba(78, 133, 40, .10);
+    color: #3E6B20;
+    border-left-color: #4E8528;
   }
 
   body.light-mode .refresh-btn {
@@ -636,23 +670,158 @@
 
   body.light-mode .refresh-btn:hover {
     background: #F0F2F3;
-    border-color: #65A637;
-    color: #4E8528;
+    border-color: #4E8528;
+    color: #3E6B20;
   }
 
   body.light-mode .note-banner {
     background: #FFF8DF;
     border-color: #E8D78A;
+    color: #8A6D1B;
+  }
+
+  body.light-mode .kpi-value.accent {
+    color: #3E6B20;
+  }
+
+  body.light-mode .status-dot.live {
+    background: #4E8528;
+  }
+
+  body.light-mode .status-label.live-text {
+    color: #3E6B20;
+  }
+
+  body.light-mode .badge.low {
+    background: rgba(78, 133, 40, 0.12);
+    color: #3E6B20;
+  }
+
+  body.light-mode .badge.medium {
+    background: rgba(191, 137, 8, 0.14);
+    color: #8A6608;
+  }
+
+  body.light-mode .badge.high {
+    background: rgba(199, 105, 22, 0.14);
+    color: #A05A12;
+  }
+
+  body.light-mode .badge.critical {
+    background: rgba(201, 60, 60, 0.14);
+    color: #B23B3B;
+  }
+
+  body.light-mode .pagination button {
+    background: #FFFFFF;
+    border-color: #D6DADF;
+    color: #4E555C;
+  }
+
+  body.light-mode .pagination button:hover:not(:disabled) {
+    border-color: #4E8528;
+    color: #3E6B20;
+  }
+
+  body.light-mode code.inline {
+    background: #EEF1F3;
+    color: #4E555C;
+  }
+
+  body.light-mode canvas {
+    filter: none;
+  }
+
+  /* Chart.js legend text is drawn on canvas (can't use CSS vars), so
+     JS reads this custom property when it (re)builds the chart. */
+  body.light-mode { --chart-legend-color: #4E555C; }
+  body { --chart-legend-color: #7C8B9C; }
+
+  /* Tables can outgrow narrow panels — scroll the panel horizontally
+     instead of letting the layout break. */
+  .panel {
+    overflow-x: auto;
+  }
+
+  /* ===== Responsive: collapse the sidebar into a top bar + drawer ===== */
+  @media (max-width: 860px) {
+    body { flex-direction: column; }
+
+    .mobile-nav-toggle { display: flex; }
+
+    .sidebar {
+      position: fixed;
+      inset: 0 25% 0 0;
+      z-index: 40;
+      width: auto;
+      transform: translateX(-100%);
+      transition: transform 0.2s ease;
+      box-shadow: 2px 0 24px var(--theme-shadow, rgba(0,0,0,.25));
+    }
+
+    .sidebar.open { transform: translateX(0); }
+
+    .sidebar-backdrop.open {
+      display: block;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 30;
+    }
+
+    .main {
+      padding: 16px;
+      max-height: none;
+    }
+
+    .page-header {
+      flex-wrap: wrap;
+      row-gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .page-title { font-size: 19px; }
+
+    .kpi-grid {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .kpi-card { padding: 12px 14px; }
+    .kpi-value { font-size: 22px; }
+
+    .panel { padding: 14px; margin-bottom: 14px; }
+
+    .filter-row { flex-direction: column; align-items: stretch; }
+    .filter-row input, .filter-row select { width: 100%; }
+
+    table { min-width: 560px; }
+  }
+
+  @media (max-width: 420px) {
+    .kpi-grid { grid-template-columns: 1fr; }
   }
 
 </style>
 </head>
 <body>
 
-<div class="sidebar">
+<button class="mobile-nav-toggle" id="mobileNavToggle" type="button" onclick="toggleMobileNav()" aria-label="Toggle navigation">
+  <span class="nav-icon">≡</span> Menu
+</button>
+
+<div class="sidebar" id="sidebar">
   <div class="brand">
-    <div class="brand-title">SMART SIEM</div>
-    <div class="brand-sub">E-Commerce Threat Console</div>
+    <div class="brand-heading">
+      <div>
+        <div class="brand-title">SMART SIEM</div>
+        <div class="brand-sub">E-Commerce Threat Console</div>
+      </div>
+      <button class="theme-toggle" id="themeToggle" type="button" onclick="toggleTheme()" title="Switch theme" aria-label="Toggle light/dark theme">
+        <span class="theme-icon" id="themeIcon">☾</span>
+      </button>
+    </div>
   </div>
   <div class="status-row">
     <div class="status-dot" id="statusDot"></div>
@@ -668,14 +837,11 @@
     <div class="nav-item" data-tab="logs"><span class="nav-icon">≡</span>Logs</div>
   </nav>
   <div class="sidebar-footer">
-      <button class="theme-toggle" id="themeToggle" type="button" onclick="toggleTheme()">
-        <span class="theme-icon" id="themeIcon">☾</span>
-        <span id="themeText">Dark mode</span>
-      </button>
-    API: <span id="apiBaseLabel">localhost:8000</span><br>
+    API: <span id="apiBaseLabel">—</span><br>
     Smart SIEM v0.1
   </div>
 </div>
+<div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleMobileNav()"></div>
 
 <div class="main">
 
@@ -851,7 +1017,13 @@
 </div>
 
 <script>
-const API_BASE = "http://localhost:8000";
+// Same-origin in production (this file is served by the FastAPI app itself,
+// see main.py's "/" route) — falls back to localhost:8000 only when the
+// dashboard is opened directly (e.g. file:// or a plain static dev server)
+// on your own machine.
+const API_BASE = (["localhost", "127.0.0.1", ""].includes(location.hostname))
+  ? "http://localhost:8000"
+  : window.location.origin;
 document.getElementById('apiBaseLabel').textContent = API_BASE.replace(/^https?:\/\//, '');
 
 let categoryChart = null;
@@ -968,7 +1140,9 @@ async function loadOverview() {
 function renderCategoryChart(labels, values) {
   const ctx = document.getElementById('categoryChart');
   if (categoryChart) categoryChart.destroy();
+  const isLight = document.body.classList.contains('light-mode');
   const colors = ['#2DD4BF', '#F0465B', '#EAC54F', '#F5A623', '#34D399'];
+  const legendColor = getComputedStyle(document.body).getPropertyValue('--chart-legend-color').trim() || '#7C8B9C';
   categoryChart = new Chart(ctx, {
     type: 'doughnut',
     data: {
@@ -976,7 +1150,7 @@ function renderCategoryChart(labels, values) {
       datasets: [{
         data: values.length ? values : [1],
         backgroundColor: values.length ? colors : ['#1E2733'],
-        borderColor: '#121821',
+        borderColor: isLight ? '#FFFFFF' : '#121821',
         borderWidth: 2,
       }]
     },
@@ -984,7 +1158,7 @@ function renderCategoryChart(labels, values) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { position: 'bottom', labels: { color: '#7C8B9C', font: { family: 'IBM Plex Mono', size: 10 }, padding: 12 } }
+        legend: { position: 'bottom', labels: { color: legendColor, font: { family: 'IBM Plex Mono', size: 10 }, padding: 12 } }
       }
     }
   });
@@ -1194,10 +1368,10 @@ loadOverview();
   function updateThemeButton() {
     const isLight = document.body.classList.contains('light-mode');
     const icon = document.getElementById('themeIcon');
-    const text = document.getElementById('themeText');
+    const btn = document.getElementById('themeToggle');
 
     if (icon) icon.textContent = isLight ? '☀' : '☾';
-    if (text) text.textContent = isLight ? 'Light mode' : 'Dark mode';
+    if (btn) btn.title = isLight ? 'Switch to dark mode' : 'Switch to light mode';
   }
 
   function toggleTheme() {
@@ -1205,13 +1379,32 @@ loadOverview();
     localStorage.setItem('siem-dashboard-theme', isLight ? 'light' : 'dark');
     updateThemeButton();
 
-    // Redraw charts if the dashboard already exposes a resize handler.
+    // Rebuild the doughnut chart so its legend text and slice borders
+    // pick up the new theme's colors, then trigger a resize for anything
+    // else listening for layout changes.
+    if (typeof loadOverview === 'function' && activeTab === 'overview') {
+      loadOverview();
+    }
     if (typeof window.dispatchEvent === 'function') {
       window.dispatchEvent(new Event('resize'));
     }
   }
 
   document.addEventListener('DOMContentLoaded', updateThemeButton);
+
+  // ===== Mobile nav (collapses the sidebar into a drawer under ~860px) =====
+  function toggleMobileNav() {
+    document.getElementById('sidebar').classList.toggle('open');
+    document.getElementById('sidebarBackdrop').classList.toggle('open');
+  }
+
+  // Auto-close the mobile drawer once a tab is picked
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.getElementById('sidebar').classList.remove('open');
+      document.getElementById('sidebarBackdrop').classList.remove('open');
+    });
+  });
 </script>
 
 </body>

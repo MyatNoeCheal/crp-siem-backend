@@ -1,3 +1,5 @@
+# uvicorn main:app --reload --port 8000
+
 from fastapi import FastAPI, Query, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
