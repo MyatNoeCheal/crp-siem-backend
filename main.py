@@ -10,6 +10,7 @@ from database import get_db
 from utils import normalize_log, get_risk_level
 from dataset.scripts.clean_email import get_logs
 from ai_insights import generate_insights
+from lstm_inference import score_user_sequence
 
 import dataset.scripts.clean_email as ce
 
@@ -266,6 +267,20 @@ def user_behavior(limit: int = 100, user_id: Optional[str] = None):
         results.append(log)
 
     return {"results": results, "count": len(results)}
+
+
+# =========================
+# LSTM BEHAVIORAL RISK (per user) — sequence-based anomaly score,
+# the "LSTM" half of the Hybrid Autoencoder + LSTM model. Complements
+# the rule-based /user-behavior results above with a reconstruction-error
+# based score computed over that user's recent event sequence.
+# =========================
+@app.get("/user-behavior/{user_id}/lstm-risk")
+def user_behavior_lstm_risk(user_id: str):
+    events = list(
+        logs_collection.find({"user_id": user_id}).sort("timestamp", 1).limit(15)
+    )
+    return score_user_sequence(events)
 
 
 # =========================

@@ -3,3 +3,11 @@ uvicorn
 pymongo
 pydantic
 pandas
+
+# For the LSTM behavioral model.
+# (torch, joblib, matplotlib match what train_autoencoder_local.py /
+# evaluate_model.py already needed for the Autoencoder half.)
+torch
+joblib
+matplotlib
+scikit-learn

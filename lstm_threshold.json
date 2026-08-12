@@ -1,0 +1,25 @@
+{
+  "threshold": 0.5617125034332275,
+  "threshold_percentile": 95,
+  "seq_len": 15,
+  "feature_dim": 8,
+  "hidden_dim": 32,
+  "bottleneck_dim": 16,
+  "feature_names": [
+    "hour_of_day",
+    "day_of_week",
+    "minutes_since_last_norm",
+    "email_size_norm",
+    "attachments_norm",
+    "num_recipients_norm",
+    "is_external_recipient",
+    "is_large_attachment"
+  ],
+  "val_reconstruction_error": {
+    "mean": 0.3746298551559448,
+    "std": 0.10956048220396042,
+    "min": 0.1039838045835495,
+    "max": 2.265730381011963
+  },
+  "note": "Unsupervised model -- email.csv has no ground-truth insider labels, so this threshold is a distributional cutoff, not an F1-optimized one. Report this honestly in the Evaluation Framework section, same as noted in fraud-inference.py."
+}

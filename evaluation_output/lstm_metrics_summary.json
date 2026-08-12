@@ -1,0 +1,11 @@
+{
+  "total_sequences": 207317,
+  "flagged_count": 10051,
+  "flagged_rate": 0.04848131122869808,
+  "threshold": 0.5617125034332275,
+  "error_mean": 0.3739694356918335,
+  "error_std": 0.107240691781044,
+  "error_min": 0.08457795530557632,
+  "error_max": 2.265730381011963,
+  "note": "Unsupervised evaluation -- no ground-truth insider labels exist in email.csv. Precision/Recall/F1/AUPRC are not reportable here; see lstm_top_anomalies.csv for qualitative review of the highest-error sequences instead."
+}
