@@ -9,19 +9,19 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
   :root {
-    --bg: #0B0F14;
-    --panel: #121821;
-    --panel-hover: #161E29;
-    --border: #1E2733;
-    --text: #E6EDF3;
-    --text-muted: #7C8B9C;
-    --text-dim: #4A5A6B;
-    --accent: #2DD4BF;
-    --accent-dim: rgba(45, 212, 191, 0.12);
-    --low: #34D399;
-    --medium: #EAC54F;
-    --high: #F5A623;
-    --critical: #F0465B;
+    --bg: #0B0C0E;
+    --panel: #15171A;
+    --panel-hover: #1D2024;
+    --border: #30343A;
+    --text: #E8E9EA;
+    --text-muted: #A7ABB0;
+    --text-dim: #737980;
+    --accent: #65A637;
+    --accent-dim: rgba(101, 166, 55, 0.14);
+    --low: #65A637;
+    --medium: #F2C94C;
+    --high: #F2994A;
+    --critical: #D94A4A;
     --font-mono: 'IBM Plex Mono', monospace;
     --font-body: 'Inter', sans-serif;
   }
@@ -324,6 +324,327 @@
     border-radius: 6px;
     margin-bottom: 18px;
   }
+
+  /* ===== Splunk-inspired theme ===== */
+  body {
+    background: #0B0C0E;
+    color: #E8E9EA;
+  }
+
+  .sidebar {
+    width: 235px;
+    background: #15171A;
+    border-right: 1px solid #30343A;
+  }
+
+  .brand {
+    background: #17191C;
+    padding: 18px 18px 16px;
+    border-bottom: 1px solid #30343A;
+  }
+
+  .brand-title {
+    color: #E8E9EA;
+    font-size: 16px;
+    letter-spacing: 0.03em;
+  }
+
+  .brand-sub {
+    color: #737980;
+  }
+
+  .status-row {
+    background: #15171A;
+    border-bottom: 1px solid #30343A;
+  }
+
+  .nav-item {
+    color: #A7ABB0;
+    border-left: 3px solid transparent;
+    padding: 11px 18px;
+  }
+
+  .nav-item:hover {
+    background: #1D2024;
+    color: #E8E9EA;
+  }
+
+  .nav-item.active {
+    background: rgba(101, 166, 55, 0.14);
+    color: #8BC34A;
+    border-left-color: #65A637;
+  }
+
+  .sidebar-footer {
+    background: #121416;
+    border-top: 1px solid #30343A;
+    color: #737980;
+  }
+
+  .main {
+    background: #0B0C0E;
+  }
+
+  .page-header {
+    border-bottom: 1px solid #30343A;
+    padding-bottom: 16px;
+  }
+
+  .page-title {
+    font-size: 21px;
+    font-weight: 600;
+  }
+
+  .page-sub {
+    color: #8E949A;
+  }
+
+  .refresh-btn {
+    background: #1A1D20;
+    border: 1px solid #454A50;
+    color: #C5C8CB;
+    border-radius: 3px;
+  }
+
+  .refresh-btn:hover {
+    background: #24282C;
+    border-color: #65A637;
+    color: #8BC34A;
+  }
+
+  .kpi-card,
+  .panel {
+    background: #15171A;
+    border: 1px solid #30343A;
+    border-radius: 3px;
+  }
+
+  .kpi-card:hover,
+  .panel:hover {
+    border-color: #454A50;
+  }
+
+  .kpi-label {
+    color: #737980;
+  }
+
+  .kpi-value.accent {
+    color: #8BC34A;
+  }
+
+  .filter-row input,
+  .filter-row select {
+    background: #0F1113;
+    border: 1px solid #3B4046;
+    color: #E8E9EA;
+    border-radius: 3px;
+  }
+
+  .filter-row input:focus,
+  .filter-row select:focus {
+    border-color: #65A637;
+  }
+
+  table th {
+    background: #191C20;
+    color: #8E949A;
+    border-bottom: 1px solid #3A3F45;
+  }
+
+  table td {
+    border-bottom: 1px solid #292D32;
+  }
+
+  tr:hover td {
+    background: #1D2024;
+  }
+
+  .badge.low {
+    background: rgba(101, 166, 55, 0.15);
+    color: #8BC34A;
+  }
+
+  .badge.medium {
+    background: rgba(242, 201, 76, 0.15);
+    color: #F2C94C;
+  }
+
+  .badge.high {
+    background: rgba(242, 153, 74, 0.15);
+    color: #F2994A;
+  }
+
+  .badge.critical {
+    background: rgba(217, 74, 74, 0.15);
+    color: #E05A5A;
+  }
+
+  .pagination button {
+    background: #15171A;
+    border: 1px solid #3B4046;
+    color: #A7ABB0;
+    border-radius: 3px;
+  }
+
+  .pagination button:hover:not(:disabled) {
+    border-color: #65A637;
+    color: #8BC34A;
+  }
+
+  .note-banner {
+    background: rgba(242, 201, 76, 0.08);
+    border: 1px solid rgba(242, 201, 76, 0.25);
+  }
+
+  code.inline {
+    background: #0F1113;
+    color: #A7ABB0;
+  }
+
+  .empty-state {
+    color: #737980;
+  }
+
+  /* Make the charts fit the darker Splunk-style panels. */
+  canvas {
+    filter: saturate(0.9);
+  }
+
+
+  /* ===== Light/Dark theme system ===== */
+  :root {
+    --theme-bg: #0B0C0E;
+    --theme-panel: #15171A;
+    --theme-panel-hover: #1D2024;
+    --theme-border: #30343A;
+    --theme-text: #E8E9EA;
+    --theme-muted: #8E949A;
+    --theme-input: #0F1113;
+    --theme-header: #191C20;
+    --theme-row-hover: #1D2024;
+    --theme-shadow: rgba(0,0,0,.18);
+  }
+
+  body.light-mode {
+    --theme-bg: #F5F7F8;
+    --theme-panel: #FFFFFF;
+    --theme-panel-hover: #F0F2F3;
+    --theme-border: #D6DADF;
+    --theme-text: #25282B;
+    --theme-muted: #687078;
+    --theme-input: #FFFFFF;
+    --theme-header: #EEF1F3;
+    --theme-row-hover: #F5F7F8;
+    --theme-shadow: rgba(0,0,0,.08);
+  }
+
+  body,
+  .sidebar,
+  .main,
+  .panel,
+  .kpi-card,
+  .brand,
+  .status-row,
+  .sidebar-footer,
+  .filter-row input,
+  .filter-row select,
+  table th,
+  table td {
+    transition: background-color .2s ease, color .2s ease,
+                border-color .2s ease, box-shadow .2s ease;
+  }
+
+  body {
+    background: var(--theme-bg);
+    color: var(--theme-text);
+  }
+
+  .sidebar, .brand, .status-row, .sidebar-footer,
+  .panel, .kpi-card {
+    background: var(--theme-panel);
+    border-color: var(--theme-border);
+  }
+
+  .main {
+    background: var(--theme-bg);
+  }
+
+  .page-sub, .kpi-label, .sidebar-footer, .brand-sub {
+    color: var(--theme-muted);
+  }
+
+  .filter-row input,
+  .filter-row select {
+    background: var(--theme-input);
+    color: var(--theme-text);
+    border-color: var(--theme-border);
+  }
+
+  table th {
+    background: var(--theme-header);
+    color: var(--theme-muted);
+    border-color: var(--theme-border);
+  }
+
+  table td {
+    border-color: var(--theme-border);
+  }
+
+  tr:hover td {
+    background: var(--theme-row-hover);
+  }
+
+  .theme-toggle {
+    width: 100%;
+    margin-top: 12px;
+    padding: 9px 12px;
+    border: 1px solid var(--theme-border);
+    border-radius: 4px;
+    background: var(--theme-panel-hover);
+    color: var(--theme-text);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-align: left;
+  }
+
+  .theme-toggle:hover {
+    border-color: #65A637;
+    color: #65A637;
+  }
+
+  .theme-icon {
+    display: inline-block;
+    width: 20px;
+  }
+
+  body.light-mode .nav-item:hover {
+    background: #EEF1F3;
+    color: #25282B;
+  }
+
+  body.light-mode .nav-item.active {
+    background: rgba(101, 166, 55, .10);
+    color: #4E8528;
+  }
+
+  body.light-mode .refresh-btn {
+    background: #FFFFFF;
+    color: #4E555C;
+    border-color: #C9CED3;
+  }
+
+  body.light-mode .refresh-btn:hover {
+    background: #F0F2F3;
+    border-color: #65A637;
+    color: #4E8528;
+  }
+
+  body.light-mode .note-banner {
+    background: #FFF8DF;
+    border-color: #E8D78A;
+  }
+
 </style>
 </head>
 <body>
@@ -337,10 +658,6 @@
     <div class="status-dot" id="statusDot"></div>
     <span class="status-label" id="statusLabel">Connecting…</span>
   </div>
-  <div class="status-row" style="cursor: pointer;" id="pollToggleRow" onclick="togglePolling()">
-    <div class="status-dot" id="pollDot"></div>
-    <span class="status-label" id="pollLabel">Auto-refresh: ON</span>
-  </div>
   <nav id="navList">
     <div class="nav-item active" data-tab="overview"><span class="nav-icon">◆</span>Overview</div>
     <div class="nav-item" data-tab="threats"><span class="nav-icon">▲</span>Threats</div>
@@ -351,6 +668,10 @@
     <div class="nav-item" data-tab="logs"><span class="nav-icon">≡</span>Logs</div>
   </nav>
   <div class="sidebar-footer">
+      <button class="theme-toggle" id="themeToggle" type="button" onclick="toggleTheme()">
+        <span class="theme-icon" id="themeIcon">☾</span>
+        <span id="themeText">Dark mode</span>
+      </button>
     API: <span id="apiBaseLabel">localhost:8000</span><br>
     Smart SIEM v0.1
   </div>
@@ -552,36 +873,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
   });
 });
 
-// ===== Auto-refresh polling =====
-// Re-fetches whichever tab is currently active, on a timer, so new
-// events (e.g. sent via POST /detect) show up without a manual refresh.
-const POLL_INTERVAL_MS = 8000;
-let pollingEnabled = true;
-let pollTimer = null;
-
-function startPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(() => {
-    if (pollingEnabled) loadTabData(activeTab);
-  }, POLL_INTERVAL_MS);
-}
-
-function togglePolling() {
-  pollingEnabled = !pollingEnabled;
-  const dot = document.getElementById('pollDot');
-  const label = document.getElementById('pollLabel');
-  if (pollingEnabled) {
-    dot.className = 'status-dot live';
-    label.textContent = 'Auto-refresh: ON';
-    label.className = 'status-label live-text';
-    loadTabData(activeTab); // immediate refresh when turned back on
-  } else {
-    dot.className = 'status-dot';
-    label.textContent = 'Auto-refresh: OFF';
-    label.className = 'status-label';
-  }
-}
-
+// ===== Tab data loading =====
 function loadTabData(tab) {
   switch (tab) {
     case 'overview': loadOverview(); break;
@@ -887,9 +1179,39 @@ function changeLogsPage(delta) {
 checkStatus();
 setInterval(checkStatus, 15000);
 loadOverview();
-document.getElementById('pollDot').className = 'status-dot live';
-document.getElementById('pollLabel').className = 'status-label live-text';
-startPolling();
+</script>
+
+
+<script>
+  // ===== Dashboard theme switcher =====
+  (function () {
+    const savedTheme = localStorage.getItem('siem-dashboard-theme');
+    if (savedTheme === 'light') {
+      document.body.classList.add('light-mode');
+    }
+  })();
+
+  function updateThemeButton() {
+    const isLight = document.body.classList.contains('light-mode');
+    const icon = document.getElementById('themeIcon');
+    const text = document.getElementById('themeText');
+
+    if (icon) icon.textContent = isLight ? '☀' : '☾';
+    if (text) text.textContent = isLight ? 'Light mode' : 'Dark mode';
+  }
+
+  function toggleTheme() {
+    const isLight = document.body.classList.toggle('light-mode');
+    localStorage.setItem('siem-dashboard-theme', isLight ? 'light' : 'dark');
+    updateThemeButton();
+
+    // Redraw charts if the dashboard already exposes a resize handler.
+    if (typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new Event('resize'));
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', updateThemeButton);
 </script>
 
 </body>
