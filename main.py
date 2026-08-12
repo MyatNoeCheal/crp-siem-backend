@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Query, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from typing import Optional
 import os
 
@@ -63,7 +64,19 @@ def require_api_key(x_api_key: Optional[str] = Header(default=None)):
 
 # Root test
 @app.get("/")
-def home():
+def serve_dashboard():
+    # Serves dashboard.html directly at the root URL, so visiting the
+    # Render URL in a browser shows the actual dashboard instead of a
+    # bare JSON message. dashboard.html must sit in the same folder as
+    # main.py (the project root) for this relative path to work.
+    return FileResponse("dashboard.html")
+
+
+@app.get("/health")
+def health():
+    # The old root endpoint, moved here. Useful for quick uptime checks
+    # (e.g. from the dashboard's own connection-status indicator) without
+    # needing to parse HTML.
     return {"message": "Smart SIEM API Running"}
 
 
