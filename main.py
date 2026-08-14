@@ -18,6 +18,8 @@ from utils import normalize_log, get_risk_level
 from dataset.scripts.clean_email import get_logs
 from ai_insights import generate_insights
 from lstm_inference import score_user_sequence
+from fraud_stream import generate_simulated_fraud_events
+from network_stream import generate_simulated_network_events
 
 import dataset.scripts.clean_email as ce
 
@@ -46,6 +48,9 @@ db = get_db()
 collection = db.email_logs
 logs_collection = db.logs
 alerts_collection = db.alerts
+
+detector.db = db  # gives the detector access to Mongo for the dynamic
+                  # high-value-transaction threshold (see detector.py)
 
 
 # =========================
@@ -1009,4 +1014,41 @@ def stats():
         "total_events": total,
         "critical_events": critical,
         "anomalies": anomalies
+    }
+    
+@app.post("/fraud/simulate", dependencies=[Depends(require_api_key)])
+def simulate_fraud_stream(count: int = 20):
+    events = generate_simulated_fraud_events(count=count)
+    inserted = 0
+    for e in events:
+        logs_collection.insert_one(e)
+        _upsert_alert(e, e["risk_score"], e["risk_level"], e["anomaly"], e["reason"], "fraud")
+        inserted += 1
+    return {
+        "message": f"Inserted {inserted} simulated fraud events",
+        "count": inserted,
+        "source": "simulated_fraud_stream",
+    }
+
+
+# =========================
+# SIMULATED NETWORK INTRUSION STREAM — replays held-out UNSW-NB15 test
+# flows through the real trained Network Intrusion Autoencoder (see
+# network_stream.py for why this is the honest way to demo the model
+# live, given live SIEM events don't produce UNSW-NB15's 45 flow-level
+# features). Inserted as category="threat" so it flows into the same
+# Threats tab / alert pipeline as the rule-based detections.
+# =========================
+@app.post("/threats/simulate-network", dependencies=[Depends(require_api_key)])
+def simulate_network_stream(count: int = 20):
+    events = generate_simulated_network_events(count=count)
+    inserted = 0
+    for e in events:
+        logs_collection.insert_one(e)
+        _upsert_alert(e, e["risk_score"], e["risk_level"], e["anomaly"], e["reason"], "threat")
+        inserted += 1
+    return {
+        "message": f"Inserted {inserted} simulated network intrusion events",
+        "count": inserted,
+        "source": "simulated_network_stream",
     }

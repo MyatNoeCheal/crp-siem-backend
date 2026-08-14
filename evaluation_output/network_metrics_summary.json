@@ -1,0 +1,30 @@
+{
+  "test_set_size": 82332,
+  "test_set_attack_count": 45332,
+  "threshold": 0.03962561673808522,
+  "auprc": 0.8487388252897109,
+  "confusion_matrix": {
+    "true_negative": 26663,
+    "false_positive": 10337,
+    "false_negative": 7601,
+    "true_positive": 37731
+  },
+  "top_feature_attribution_pct": {
+    "service_ssl": 1.05,
+    "service_radius": 1.04,
+    "sbytes": 0.89,
+    "service_dns": 0.87,
+    "ct_dst_sport_ltm": 0.85,
+    "sloss": 0.82,
+    "spkts": 0.78,
+    "proto_gre": 0.76,
+    "service_pop3": 0.75,
+    "service_-": 0.72,
+    "service_snmp": 0.69,
+    "proto_prm": 0.68,
+    "sload": 0.68,
+    "proto_bbn-rcc": 0.67,
+    "proto_leaf-1": 0.67
+  },
+  "note": "Evaluated against the OFFICIAL UNSW-NB15 testing-set.csv partition -- directly comparable to published literature using the same benchmark split."
+}
