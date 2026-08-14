@@ -3,6 +3,8 @@
 from fastapi import FastAPI, Query, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from bson import ObjectId
 from typing import Optional
 from datetime import datetime, timedelta
 import os
@@ -43,6 +45,154 @@ app.add_middleware(
 db = get_db()
 collection = db.email_logs
 logs_collection = db.logs
+alerts_collection = db.alerts
+
+
+# =========================
+# ALERT LIFECYCLE — persistent, triageable alerts (New / Investigating /
+# Resolved / False Positive), the way a real SIEM separates "raw log
+# events" (every event, in logs_collection, visible on the Logs tab) from
+# "alerts" (only the anomalous ones that actually need an analyst's
+# attention, in alerts_collection, visible on the Threats tab).
+#
+# This REPLACES the old on-the-fly _correlate_incidents() grouping (still
+# defined below, now unused, kept for reference): that function recomputed
+# groupings from raw logs on every /threats request and had no memory of
+# anything -- an analyst's triage decision would just vanish on the next
+# refresh. Alerts persist in their own collection instead, so status
+# survives across requests exactly like a real alert queue.
+# =========================
+ALERT_STATUSES = {"new", "investigating", "resolved", "false_positive"}
+
+# How close together repeated events of the same type/source have to be
+# to merge into one alert instead of creating a new one -- matches the
+# window _correlate_incidents() used to use, so alert grouping behavior
+# is unchanged from before this refactor.
+ALERT_CORRELATION_WINDOW_MINUTES = 10
+
+
+class AlertStatusUpdate(BaseModel):
+    status: str
+    note: Optional[str] = None
+
+
+def _upsert_alert(event_dict, score, level, is_anomaly, reasons, category):
+    """
+    Creates or updates a persistent alert for an anomalous event.
+
+    Only called when is_anomaly=True -- a real SIEM doesn't raise an
+    alert for every log line, only for things that cross a risk
+    threshold. Non-anomalous events are still stored in logs_collection
+    (visible on the Logs tab) but never become alerts.
+
+    Correlation/deduplication: if an OPEN alert (status new/investigating)
+    already exists for the same ip + event_type + category within the
+    last ALERT_CORRELATION_WINDOW_MINUTES, this event is merged into it
+    (count incremented, risk re-maxed, reasons merged) instead of creating
+    a duplicate alert. A resolved/false-positive alert is deliberately
+    NOT matched here -- once an analyst has closed it, a new occurrence
+    should open a fresh alert rather than silently reopening a closed one.
+
+    Returns the alert's _id (new or existing), or None if not anomalous.
+    """
+    if not is_anomaly:
+        return None
+
+    timestamp = event_dict.get("timestamp")
+    window_start_iso = None
+    if timestamp:
+        try:
+            ts_dt = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+            window_start_iso = (ts_dt - timedelta(minutes=ALERT_CORRELATION_WINDOW_MINUTES)).isoformat()
+        except Exception:
+            window_start_iso = None
+
+    query = {
+        "ip": event_dict.get("ip"),
+        "event_type": event_dict.get("event_type"),
+        "category": category,
+        "status": {"$in": ["new", "investigating"]},
+    }
+    if window_start_iso:
+        query["last_seen"] = {"$gte": window_start_iso}
+
+    existing = alerts_collection.find_one(query, sort=[("last_seen", -1)])
+
+    if existing:
+        merged_reasons = list(existing.get("reason", []))
+        for r in reasons:
+            if r not in merged_reasons:
+                merged_reasons.append(r)
+        new_score = max(existing.get("risk_score", 0), score)
+
+        alerts_collection.update_one(
+            {"_id": existing["_id"]},
+            {
+                "$set": {
+                    "last_seen": timestamp,
+                    "risk_score": new_score,
+                    "risk_level": get_risk_level(new_score),
+                    "reason": merged_reasons,
+                    "updated_at": datetime.utcnow().isoformat(),
+                },
+                "$inc": {"count": 1},
+            },
+        )
+        return existing["_id"]
+
+    new_alert = {
+        "ip": event_dict.get("ip"),
+        "user_id": event_dict.get("user_id"),
+        "event_type": event_dict.get("event_type"),
+        "category": category,
+        "count": 1,
+        "first_seen": timestamp,
+        "last_seen": timestamp,
+        "risk_score": score,
+        "risk_level": level,
+        "anomaly": True,
+        "reason": list(reasons),
+        "status": "new",
+        "status_note": None,
+        "status_updated_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    result = alerts_collection.insert_one(new_alert)
+    return result.inserted_id
+
+
+def _compute_alert_priority(alert):
+    """
+    Combines three explainable signals into one priority score, used to
+    sort the Threats tab and populate the Overview "Top Priority Alerts"
+    widget:
+
+      - severity (risk_score, 0-100)   -- how bad this looks
+      - volume (event count, capped at +20) -- repeated activity from the
+        same source is more urgent than a one-off, even at equal severity
+      - recency (exponential decay from last_seen, capped at +30,
+        halving roughly every 12 hours) -- an alert active five minutes
+        ago should usually outrank an equally severe one from three days
+        ago that nobody has closed
+
+    Deliberately a transparent weighted formula, not a learned/black-box
+    score -- consistent with the survey finding (Q20) that a lack of
+    clear, explainable insight is one of the biggest limitations of
+    current monitoring tools. An analyst can see exactly why an alert
+    ranked where it did.
+    """
+    risk_score = alert.get("risk_score", 0) or 0
+    count = alert.get("count", 1) or 1
+
+    volume_score = min(count * 2, 20)
+
+    recency_score = 0.0
+    ts = _parse_ts(alert.get("last_seen"))
+    if ts:
+        hours_since = max((datetime.utcnow() - ts).total_seconds() / 3600.0, 0)
+        recency_score = 30.0 * math.exp(-hours_since / 12.0)
+
+    return round(risk_score + volume_score + recency_score, 1)
 
 
 # =========================
@@ -137,14 +287,17 @@ def seed_demo_data():
         try:
             event = LogEvent(**raw)
             score, reasons, category = detector.analyze(event)
+            level = get_risk_level(score)
+            is_anomaly = score >= 50
             logs_collection.insert_one({
                 **event.dict(),
                 "category": category,
                 "risk_score": score,
-                "risk_level": get_risk_level(score),
-                "anomaly": score >= 50,
+                "risk_level": level,
+                "anomaly": is_anomaly,
                 "reason": reasons,
             })
+            _upsert_alert(event.dict(), score, level, is_anomaly, reasons, category)
             inserted += 1
         except Exception as e:
             print(f"  skipped one demo event ({raw.get('event_type')}): {e}")
@@ -386,13 +539,56 @@ def detect(event: LogEvent):
         "reason": reasons,
     })
 
+    alert_id = _upsert_alert(event.dict(), score, level, is_anomaly, reasons, category)
+
     return {
         "anomaly": is_anomaly,
         "risk_score": score,
         "risk_level": level,
         "category": category,
-        "reason": reasons
+        "reason": reasons,
+        "alert_id": str(alert_id) if alert_id else None,
     }
+
+
+# =========================
+# ALERT TRIAGE — update an alert's status (New / Investigating / Resolved
+# / False Positive). Called directly by the dashboard's Threats tab.
+#
+# Deliberately NOT behind require_api_key: /detect and /logs POST are
+# protected because they accept external ingestion traffic (e.g. a
+# simulated e-commerce site), but this endpoint is triggered by an
+# analyst clicking a dropdown in the dashboard itself, which has no
+# login/key-entry flow to attach an X-API-Key header. In a production
+# deployment this would sit behind real analyst authentication instead.
+# =========================
+@app.patch("/alerts/{alert_id}/status")
+def update_alert_status(alert_id: str, update: AlertStatusUpdate):
+    if update.status not in ALERT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of {sorted(ALERT_STATUSES)}",
+        )
+    try:
+        obj_id = ObjectId(alert_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid alert_id")
+
+    result = alerts_collection.update_one(
+        {"_id": obj_id},
+        {"$set": {
+            "status": update.status,
+            "status_note": update.note,
+            "status_updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        }},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Alert not found")
+
+    alert = alerts_collection.find_one({"_id": obj_id})
+    alert["_id"] = str(alert["_id"])
+    return {"message": "Status updated", "alert": alert}
 
 
 # =========================
@@ -518,6 +714,11 @@ def overview_top_entities(scan_limit: int = 500, top_n: int = 5):
 # =========================
 def _correlate_incidents(events, window_minutes=10):
     """
+    DEPRECATED / UNUSED as of the alert-triage refactor -- /threats now
+    reads from the persistent alerts_collection instead (see
+    _upsert_alert above), so triage status survives across requests.
+    Kept here for reference on the original on-the-fly grouping approach.
+
     Groups repeated events sharing the same IP + event_type into a single
     incident when they occur within `window_minutes` of each other -- e.g.
     5 failed_login attempts become one "5x failed_login" incident, the way
@@ -576,12 +777,14 @@ def _correlate_incidents(events, window_minutes=10):
 
 @app.get("/threats")
 def threats(limit: int = 100, anomaly_only: bool = True, group_incidents: bool = True,
-            correlation_window_minutes: int = 10, scan_limit: int = 500):
-    query = {"category": "threat"}
-    if anomaly_only:
-        query["anomaly"] = True
-
+            correlation_window_minutes: int = 10, scan_limit: int = 500,
+            status: Optional[str] = None, sort: str = "priority"):
     if not group_incidents:
+        # Raw ungrouped view: every individual threat-category log event,
+        # unchanged from before this refactor.
+        query = {"category": "threat"}
+        if anomaly_only:
+            query["anomaly"] = True
         cursor = logs_collection.find(query).sort("_id", -1).limit(limit)
         results = []
         for log in cursor:
@@ -589,17 +792,44 @@ def threats(limit: int = 100, anomaly_only: bool = True, group_incidents: bool =
             results.append(log)
         return {"results": results, "count": len(results), "grouped": False}
 
-    # Correlated view: scan a wider pool of raw events, group them into
-    # incidents, then hand back the most relevant `limit` incidents.
-    cursor = logs_collection.find(query).sort("_id", -1).limit(scan_limit)
-    raw_events = list(cursor)
-    incidents = _correlate_incidents(raw_events, window_minutes=correlation_window_minutes)
+    # Grouped/triageable view: reads from the persistent alerts collection
+    # (see _upsert_alert) instead of recomputing correlation from raw logs
+    # on every request. Alerts are only ever created for anomalous events,
+    # so anomaly_only is effectively always satisfied here -- it's kept as
+    # a parameter for API compatibility with the raw mode above.
+    query = {"category": "threat"}
+    if status:
+        if status == "open":
+            # Convenience shortcut for "still needs attention" -- used by
+            # the Overview tab's Top Priority Alerts widget.
+            query["status"] = {"$in": ["new", "investigating"]}
+        elif status not in ALERT_STATUSES:
+            raise HTTPException(status_code=400, detail=f"status must be one of {sorted(ALERT_STATUSES)} or 'open'")
+        else:
+            query["status"] = status
+
+    # Fetch a wider candidate pool than `limit` so priority sorting (a
+    # Python-side computation, not something Mongo can sort on directly)
+    # has enough alerts to rank before truncating to the requested limit.
+    cursor = alerts_collection.find(query).limit(scan_limit)
+    candidates = list(cursor)
+    for a in candidates:
+        a["priority_score"] = _compute_alert_priority(a)
+
+    if sort == "recency":
+        candidates.sort(key=lambda a: a.get("last_seen") or "", reverse=True)
+    else:
+        candidates.sort(key=lambda a: a["priority_score"], reverse=True)
+
+    results = candidates[:limit]
+    for a in results:
+        a["_id"] = str(a["_id"])
 
     return {
-        "results": incidents[:limit],
-        "count": len(incidents),
+        "results": results,
+        "count": len(results),
         "grouped": True,
-        "raw_event_count": len(raw_events),
+        "sort": sort,
     }
 
 

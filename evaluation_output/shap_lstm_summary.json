@@ -3,14 +3,14 @@
   "explained_size": 40,
   "fast_method_aggregation": "max",
   "shap_feature_importance_pct": {
-    "is_large_attachment": 24.26,
-    "email_size_norm": 17.56,
-    "minutes_since_last_norm": 15.72,
-    "num_recipients_norm": 11.3,
-    "attachments_norm": 8.4,
-    "day_of_week": 8.08,
-    "is_external_recipient": 7.57,
-    "hour_of_day": 7.12
+    "is_large_attachment": 23.19,
+    "email_size_norm": 17.47,
+    "minutes_since_last_norm": 16.99,
+    "num_recipients_norm": 11.11,
+    "attachments_norm": 8.49,
+    "day_of_week": 8.12,
+    "is_external_recipient": 7.64,
+    "hour_of_day": 6.99
   },
   "fast_method_feature_importance_pct": {
     "hour_of_day": 5.01,

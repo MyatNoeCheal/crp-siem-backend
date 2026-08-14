@@ -919,6 +919,40 @@
     font-size: 12px;
   }
 
+  /* ===== Alert triage status (Threats tab) ===== */
+  .badge.status-new {
+    background: rgba(101, 166, 55, 0.12);
+    color: var(--accent);
+  }
+  .badge.status-investigating {
+    background: rgba(242, 201, 76, 0.15);
+    color: #F2C94C;
+  }
+  .badge.status-resolved {
+    background: rgba(101, 166, 55, 0.15);
+    color: #65A637;
+  }
+  .badge.status-false-positive {
+    background: rgba(115, 121, 128, 0.18);
+    color: var(--text-dim);
+  }
+  body.light-mode .badge.status-new { color: #3E6B20; }
+  body.light-mode .badge.status-resolved { color: #3E6B20; }
+  body.light-mode .badge.status-investigating { color: #8A6608; background: rgba(191, 137, 8, 0.14); }
+  body.light-mode .badge.status-false-positive { color: #4E555C; background: rgba(78, 85, 92, 0.12); }
+
+  .status-select {
+    background: var(--theme-input);
+    border: 1px solid var(--theme-border);
+    color: var(--theme-text);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .status-select:focus { outline: none; border-color: #65A637; }
+
   /* ===== Responsive: collapse the sidebar into a top bar + drawer ===== */
   @media (max-width: 860px) {
     body { flex-direction: column; }
@@ -1057,6 +1091,11 @@
       </div>
     </div>
 
+    <div class="panel">
+      <div class="panel-title">Top Priority Alerts <span class="lstm-user-tag">open alerts, ranked by severity + volume + recency</span></div>
+      <div id="topPriorityAlertsList"><p class="lstm-hint">Loading…</p></div>
+    </div>
+
     <div class="two-col">
       <div class="panel">
         <div class="panel-title">Top Offenders</div>
@@ -1095,10 +1134,27 @@
         <label class="filter-checkbox">
           <input type="checkbox" id="threatsGroupIncidents" checked onchange="loadThreats()"> Group into incidents
         </label>
+        <label class="filter-checkbox">
+          Status:
+          <select id="threatsStatusFilter" onchange="loadThreats()">
+            <option value="">All</option>
+            <option value="new">New</option>
+            <option value="investigating">Investigating</option>
+            <option value="resolved">Resolved</option>
+            <option value="false_positive">False Positive</option>
+          </select>
+        </label>
+        <label class="filter-checkbox">
+          Sort:
+          <select id="threatsSortBy" onchange="loadThreats()">
+            <option value="priority">Priority</option>
+            <option value="recency">Most Recent</option>
+          </select>
+        </label>
       </div>
       <table>
-        <thead><tr><th>Last Seen</th><th>Count</th><th>IP</th><th>Event Type</th><th>Severity</th><th>Risk Score</th><th>Reason</th></tr></thead>
-        <tbody id="threatsBody"><tr class="loading-row"><td colspan="7">Loading…</td></tr></tbody>
+        <thead><tr><th>Last Seen</th><th>Count</th><th>IP</th><th>Event Type</th><th>Severity</th><th>Risk Score</th><th>Priority</th><th>Status</th><th>Reason</th></tr></thead>
+        <tbody id="threatsBody"><tr class="loading-row"><td colspan="9">Loading…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -1514,14 +1570,20 @@ function renderCategoryChart(labels, values) {
 // ===== Threats =====
 async function loadThreats() {
   const tbody = document.getElementById('threatsBody');
-  tbody.innerHTML = '<tr class="loading-row"><td colspan="7">Loading…</td></tr>';
+  tbody.innerHTML = '<tr class="loading-row"><td colspan="9">Loading…</td></tr>';
   const anomalyOnly = document.getElementById('threatsAnomalyOnly').checked;
   const grouped = document.getElementById('threatsGroupIncidents').checked;
+  const status = document.getElementById('threatsStatusFilter').value;
+  const sortBy = document.getElementById('threatsSortBy').value;
   try {
-    const data = await apiGet(`/threats?limit=100&anomaly_only=${anomalyOnly}&group_incidents=${grouped}`);
+    const params = new URLSearchParams({ limit: 100, anomaly_only: anomalyOnly, group_incidents: grouped, sort: sortBy });
+    if (status) params.set('status', status);
+    const data = await apiGet(`/threats?${params.toString()}`);
     const results = data.results || [];
+    const isGrouped = !!data.grouped;
+
     if (results.length === 0) {
-      tbody.innerHTML = emptyRow(7, 'No threats detected', 'Threat events will appear here once logged via /detect.');
+      tbody.innerHTML = emptyRow(9, 'No threats detected', 'Threat events will appear here once logged via /detect.');
       return;
     }
     tbody.innerHTML = results.map(r => `
@@ -1532,11 +1594,60 @@ async function loadThreats() {
         <td>${r.event_type || '—'}</td>
         <td>${severityBadge(r.risk_level || r.severity)}</td>
         <td>${r.risk_score ?? '—'}</td>
+        <td>${r.priority_score != null ? priorityBadge(r.priority_score) : '—'}</td>
+        <td>${renderStatusCell(r, isGrouped)}</td>
         <td style="color:var(--text-muted);">${(r.reason || []).join(', ') || '—'}</td>
       </tr>
     `).join('');
   } catch (e) {
-    tbody.innerHTML = errorRow(7, e.message);
+    tbody.innerHTML = errorRow(9, e.message);
+  }
+}
+
+// Priority score is an explainable weighted sum (severity + volume +
+// recency, see _compute_alert_priority in main.py) -- these thresholds
+// are just for badge color, not a separate scoring pass.
+function priorityBadge(score) {
+  let cls = 'low';
+  if (score >= 110) cls = 'critical';
+  else if (score >= 80) cls = 'high';
+  else if (score >= 40) cls = 'medium';
+  return `<span class="badge ${cls}">${score}</span>`;
+}
+
+// Grouped rows come from the persistent alerts collection and have a
+// real alert _id, so they get an interactive triage dropdown. Raw
+// ungrouped rows are individual log events with no persistent alert to
+// update, so they just show a plain badge instead.
+function renderStatusCell(row, isGrouped) {
+  if (!isGrouped) {
+    return '<span class="lstm-hint">—</span>';
+  }
+  const statuses = ['new', 'investigating', 'resolved', 'false_positive'];
+  const current = row.status || 'new';
+  const options = statuses.map(s =>
+    `<option value="${s}" ${s === current ? 'selected' : ''}>${statusLabel(s)}</option>`
+  ).join('');
+  return `<select class="status-select" onchange="updateAlertStatus('${row._id}', this.value)">${options}</select>`;
+}
+
+function statusLabel(s) {
+  const map = { new: 'New', investigating: 'Investigating', resolved: 'Resolved', false_positive: 'False Positive' };
+  return map[s] || s;
+}
+
+async function updateAlertStatus(alertId, newStatus) {
+  try {
+    const res = await fetch(`${API_BASE}/alerts/${alertId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+    loadThreats(); // refresh so the row (and any status filter) reflects the confirmed change
+  } catch (e) {
+    alert(`Couldn't update alert status: ${e.message}`);
+    loadThreats(); // revert the dropdown to the real server state
   }
 }
 
