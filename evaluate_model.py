@@ -16,10 +16,11 @@ Output (all saved in an "evaluation_output" folder):
     - precision_recall_curve.png
     - confusion_matrix.png
     - reconstruction_error_distribution.png
-    - metrics_summary.json   (also prints to console)
+    - feature_attribution.png        (XAI: which features drive fraud flags)
+    - metrics_summary.json           (also prints to console)
 
-These three PNGs and the metrics table are exactly what belongs in your
-report's Evaluation Framework section.
+These four PNGs and the metrics table are exactly what belongs in your
+report's Evaluation Framework and Explainable AI sections.
 """
 
 import numpy as np
@@ -144,6 +145,52 @@ def plot_error_distribution(y_test, errors, threshold, out_path):
     plt.close()
 
 
+def plot_feature_attribution(X_test, y_test, preds, model, feature_cols, out_path, top_n=15):
+    """
+    Explainable-AI figure: for the transactions the Autoencoder correctly
+    flagged as fraud (true positives), decomposes each one's reconstruction
+    error into per-feature contributions and averages them -- showing which
+    features the model relies on most when it flags fraud. Same underlying
+    idea as lstm_inference.py's per-sequence attribution, applied in
+    aggregate across the test set instead of to one live event.
+
+    HONEST LIMITATION -- state this plainly in your report's Critical
+    Evaluation / XAI section: V1-V28 are PCA-anonymized by the dataset
+    provider, so this figure tells you *which* features the model leans on
+    (e.g. "V14", "V4") but not what they represent in business terms --
+    unlike the LSTM's human-readable features (see lstm_inference.py). This
+    is a real, literature-documented interpretability gap for this dataset
+    (Villegas-Ch et al., 2025; B.V, 2025), not a flaw in the technique.
+    """
+    true_positive_mask = (y_test == 1) & (preds == 1)
+    tp_X = X_test[true_positive_mask]
+
+    if len(tp_X) == 0:
+        print("No true-positive fraud cases in the test set -- skipping "
+              "feature attribution figure (nothing to explain).")
+        return None
+
+    reconstructions = model.predict(tp_X)
+    sq_err = np.square(tp_X - reconstructions)          # (n_true_positives, n_features)
+    avg_contribution = sq_err.mean(axis=0)
+    avg_contribution_pct = avg_contribution / avg_contribution.sum() * 100
+
+    order = np.argsort(-avg_contribution_pct)[:top_n]
+    top_features = [feature_cols[i] for i in order]
+    top_values = avg_contribution_pct[order]
+
+    plt.figure(figsize=(8, 6))
+    plt.barh(top_features[::-1], top_values[::-1], color="#2DD4BF")
+    plt.xlabel("Average Contribution to Reconstruction Error (%)")
+    plt.title(f"Feature Attribution — Autoencoder Fraud Flags\n"
+              f"(n={len(tp_X)} correctly-flagged fraud transactions)")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+    return {f: round(float(v), 2) for f, v in zip(top_features, top_values)}
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -176,6 +223,12 @@ def main():
     plot_error_distribution(y_test, errors, threshold,
                               os.path.join(OUT_DIR, "reconstruction_error_distribution.png"))
 
+    print("Generating feature attribution (XAI) figure...")
+    top_features = plot_feature_attribution(
+        X_test, y_test, preds, model, feature_cols,
+        os.path.join(OUT_DIR, "feature_attribution.png")
+    )
+
     tn, fp, fn, tp = cm.ravel()
     summary = {
         "test_set_size": int(len(X_test)),
@@ -191,6 +244,13 @@ def main():
             "false_negative": int(fn),
             "true_positive": int(tp),
         },
+        "top_feature_attribution_pct": top_features,
+        "xai_note": (
+            "V1-V28 are PCA-anonymized by the dataset provider -- this "
+            "shows WHICH features drive fraud flags, not what they mean "
+            "in business terms. State this limitation explicitly in the "
+            "report's XAI discussion."
+        ),
     }
 
     with open(os.path.join(OUT_DIR, "metrics_summary.json"), "w") as f:
@@ -202,8 +262,12 @@ def main():
     print(f"F1 Score:  {f1:.3f}")
     print(f"AUPRC:     {auprc:.3f}")
     print(f"Confusion Matrix: TN={tn} FP={fp} FN={fn} TP={tp}")
+    if top_features:
+        print("\nTop features driving fraud flags (XAI):")
+        for f, pct in list(top_features.items())[:5]:
+            print(f"  {f}: {pct}%")
     print(f"\nAll charts + metrics_summary.json saved to ./{OUT_DIR}/")
-    print("Insert the three PNGs directly into your Evaluation Framework section.")
+    print("Insert the four PNGs directly into your Evaluation Framework / XAI section.")
 
 
 if __name__ == "__main__":

@@ -44,6 +44,20 @@ _scaler = None
 _meta = None
 _device = torch.device("cpu")  # inference is cheap; no need for GPU in the API
 
+# Human-readable labels for the 8 engineered LSTM features, used when
+# reporting *why* a sequence was flagged (see build feature attribution
+# in score_user_sequence below).
+FEATURE_LABELS = {
+    "hour_of_day": "Unusual time of day",
+    "day_of_week": "Unusual day of week",
+    "minutes_since_last_norm": "Unusual gap since previous activity",
+    "email_size_norm": "Unusual activity/message size",
+    "attachments_norm": "Unusual attachment volume",
+    "num_recipients_norm": "Unusual number of recipients",
+    "is_external_recipient": "External recipient involved",
+    "is_large_attachment": "Large attachment involved",
+}
+
 
 class LSTMAutoencoder(nn.Module):
     """Must match the architecture in train_lstm_local.py exactly."""
@@ -152,6 +166,60 @@ def build_sequence_features(events):
     return np.array(feats, dtype=np.float32)
 
 
+def _feature_attribution(x, recon, top_n=3, aggregation="max"):
+    """
+    Explainable-AI step: decomposes the sequence's total reconstruction
+    error into a per-feature contribution, then reports the top_n features
+    that drove the error most.
+
+    This is a reconstruction-error attribution technique (not SHAP/LIME
+    specifically), but the same underlying idea your Literature Review
+    covers -- attributing a model's output back to input features for
+    interpretability. It's a good fit here specifically because it's
+    "free" (no extra library, no extra training) and, unlike the fraud
+    Autoencoder's PCA-anonymized V1-V28 features, the LSTM's 8 features
+    are human-readable (hour_of_day, is_external_recipient, etc.), so the
+    attribution is actually meaningful to a security analyst reading it.
+
+    AGGREGATION -- why "max", not "mean" (state this in the report's XAI
+    validation subsection): SHAP validation (see shap_evaluate_lstm.py /
+    shap_lstm_summary.json) found the original mean-over-time version
+    systematically underweighted binary/rare-event features -- notably
+    is_large_attachment, which SHAP ranked #1 (23.4% importance) but the
+    mean-based method ranked LAST (0.15%). The cause: a binary feature is
+    0 for most of the 15 timesteps in a sequence and reconstructed almost
+    perfectly at those steps (near-zero error); averaging across all 15
+    steps dilutes the one timestep where it actually mattered. SHAP's
+    gradient-based attribution doesn't have this problem, since it
+    measures marginal effect on the output rather than raw per-step error.
+    Taking the MAX per-feature error across the sequence (instead of the
+    mean) fixes this: it surfaces the single worst deviation for each
+    feature, which is what actually drives an analyst's "why was this
+    flagged" question, rather than smoothing it away. Pass
+    aggregation="mean" to reproduce the original (pre-validation) behavior.
+
+    x, recon: torch tensors, shape (1, seq_len, feature_dim)
+    Returns: [{"feature": str, "label": str, "contribution_pct": float}, ...]
+    """
+    sq_err = (x - recon) ** 2                       # (1, T, F)
+    if aggregation == "max":
+        per_feature = sq_err.max(dim=1).values.squeeze(0).cpu().numpy()  # (F,) -- peak error over time
+    else:
+        per_feature = sq_err.mean(dim=1).squeeze(0).cpu().numpy()  # (F,) -- averaged over time
+    total = float(per_feature.sum()) or 1e-9
+
+    order = np.argsort(-per_feature)[:top_n]
+    names = _meta["feature_names"]
+    return [
+        {
+            "feature": names[i],
+            "label": FEATURE_LABELS.get(names[i], names[i]),
+            "contribution_pct": round(float(per_feature[i] / total * 100), 1),
+        }
+        for i in order
+    ]
+
+
 def score_user_sequence(events, min_events=5):
     """
     events: list of dicts (SIEM log docs or CERT rows), OLDEST FIRST, for
@@ -167,6 +235,7 @@ def score_user_sequence(events, min_events=5):
           "behavior_score": float,   # 0-100, comparable in spirit to fraud_score
           "is_anomaly": bool,
           "threshold": float,
+          "top_features": [...],     # XAI: which features drove the score
         }
     """
     _load()
@@ -186,6 +255,7 @@ def score_user_sequence(events, min_events=5):
         x = torch.tensor(seq_scaled, dtype=torch.float32)
         recon = _model(x)
         error = torch.mean((x - recon) ** 2).item()
+        top_features = _feature_attribution(x, recon, top_n=3)
 
     threshold = _meta["threshold"]
     behavior_score = float(np.clip((error / threshold) * 50, 0, 100))
@@ -196,6 +266,7 @@ def score_user_sequence(events, min_events=5):
         "behavior_score": round(behavior_score, 1),
         "is_anomaly": error > threshold,
         "threshold": threshold,
+        "top_features": top_features,
     }
 
 
@@ -209,3 +280,7 @@ if __name__ == "__main__":
     result = score_user_sequence(user_events)
     print(f"User: {user}")
     print(result)
+    if result.get("available"):
+        print("\nTop contributing features (XAI):")
+        for f in result["top_features"]:
+            print(f"  {f['label']} ({f['feature']}): {f['contribution_pct']}%")

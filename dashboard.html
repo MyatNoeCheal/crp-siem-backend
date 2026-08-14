@@ -684,6 +684,10 @@
     color: #3E6B20;
   }
 
+  body.light-mode .xai-chip b {
+    color: #3E6B20;
+  }
+
   body.light-mode .status-dot.live {
     background: #4E8528;
   }
@@ -741,6 +745,178 @@
      instead of letting the layout break. */
   .panel {
     overflow-x: auto;
+  }
+
+  /* ===== LSTM behavioral risk panel (User Behavior tab) ===== */
+  .lstm-user-tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-dim);
+    margin-left: 8px;
+  }
+
+  .lstm-score-row {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    flex-wrap: wrap;
+  }
+
+  .lstm-score-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    max-width: 520px;
+  }
+
+  .lstm-hint {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  /* ===== Hybrid risk panel: component breakdown + XAI chips ===== */
+  .hybrid-components {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 2px;
+  }
+
+  .hybrid-component-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+  }
+
+  .hybrid-component-label {
+    color: var(--text-muted);
+    width: 108px;
+    flex-shrink: 0;
+  }
+
+  .hybrid-component-score {
+    font-family: var(--font-mono);
+    color: var(--text);
+    font-size: 12px;
+  }
+
+  .xai-block {
+    margin-top: 4px;
+  }
+
+  .xai-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  .xai-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--panel-hover);
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .xai-chip b {
+    color: var(--accent);
+    font-family: var(--font-mono);
+  }
+
+  /* ===== Overview: Top Offenders panel ===== */
+  .top-entities-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  .top-entities-heading {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 10px;
+  }
+
+  .top-entity-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .top-entity-row:last-child { border-bottom: none; }
+
+  .top-entity-count {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-left: auto;
+  }
+
+  /* ===== Overview: Live Activity feed ===== */
+  .live-feed-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-left: 6px;
+    box-shadow: 0 0 0 0 rgba(101, 166, 55, 0.6);
+    animation: pulse 2s infinite;
+  }
+
+  .live-feed {
+    max-height: 260px;
+    overflow-y: auto;
+  }
+
+  .live-feed-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+
+  .live-feed-item:last-child { border-bottom: none; }
+
+  .live-feed-time {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+    width: 56px;
+  }
+
+  .live-feed-type {
+    color: var(--text-muted);
+    flex: 1;
+  }
+
+  @media (max-width: 560px) {
+    .top-entities-grid { grid-template-columns: 1fr; gap: 14px; }
+  }
+
+  /* ===== Reusable filter checkbox (Threats tab, etc.) ===== */
+  .filter-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+    font-size: 12px;
   }
 
   /* ===== Responsive: collapse the sidebar into a top bar + drawer ===== */
@@ -862,6 +1038,11 @@
       <div class="kpi-card"><div class="kpi-label">Anomalies Flagged</div><div class="kpi-value accent">—</div></div>
     </div>
 
+    <div class="panel">
+      <div class="panel-title">Activity Over Time <span class="lstm-user-tag">last 24h</span></div>
+      <div class="chart-wrap" style="height:200px;"><canvas id="timelineChart"></canvas></div>
+    </div>
+
     <div class="two-col">
       <div class="panel">
         <div class="panel-title">Events by Category</div>
@@ -873,6 +1054,26 @@
           <thead><tr><th>Category</th><th>Count</th></tr></thead>
           <tbody><tr class="loading-row"><td colspan="2">Loading…</td></tr></tbody>
         </table>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel">
+        <div class="panel-title">Top Offenders</div>
+        <div class="top-entities-grid">
+          <div>
+            <div class="top-entities-heading">Top IPs</div>
+            <div id="topIpsList"><p class="lstm-hint">Loading…</p></div>
+          </div>
+          <div>
+            <div class="top-entities-heading">Riskiest Users</div>
+            <div id="topUsersList"><p class="lstm-hint">Loading…</p></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Live Activity <span class="live-feed-dot" id="liveFeedDot"></span></div>
+        <div id="liveFeedList" class="live-feed"><p class="lstm-hint">Loading…</p></div>
       </div>
     </div>
   </div>
@@ -888,13 +1089,16 @@
     </div>
     <div class="panel">
       <div class="filter-row">
-        <label style="display:flex; align-items:center; gap:6px; color:var(--text-muted); font-size:12px;">
+        <label class="filter-checkbox">
           <input type="checkbox" id="threatsAnomalyOnly" checked onchange="loadThreats()"> Anomalies only
+        </label>
+        <label class="filter-checkbox">
+          <input type="checkbox" id="threatsGroupIncidents" checked onchange="loadThreats()"> Group into incidents
         </label>
       </div>
       <table>
-        <thead><tr><th>Timestamp</th><th>IP</th><th>Event Type</th><th>Severity</th><th>Risk Score</th><th>Reason</th></tr></thead>
-        <tbody id="threatsBody"><tr class="loading-row"><td colspan="6">Loading…</td></tr></tbody>
+        <thead><tr><th>Last Seen</th><th>Count</th><th>IP</th><th>Event Type</th><th>Severity</th><th>Risk Score</th><th>Reason</th></tr></thead>
+        <tbody id="threatsBody"><tr class="loading-row"><td colspan="7">Loading…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -935,6 +1139,14 @@
       </div>
       <button class="refresh-btn" onclick="loadUserBehavior()">↻ REFRESH</button>
     </div>
+
+    <div class="panel" id="lstmRiskPanel" style="display:none;">
+      <div class="panel-title">
+        Hybrid Risk Assessment<span class="lstm-user-tag" id="lstmUserTag"></span>
+      </div>
+      <div id="lstmRiskContent"><p class="lstm-hint">Loading…</p></div>
+    </div>
+
     <div class="panel">
       <div class="filter-row">
         <input type="text" id="userBehaviorFilter" placeholder="Filter by user ID…" oninput="loadUserBehavior()">
@@ -1027,6 +1239,8 @@ const API_BASE = (["localhost", "127.0.0.1", ""].includes(location.hostname))
 document.getElementById('apiBaseLabel').textContent = API_BASE.replace(/^https?:\/\//, '');
 
 let categoryChart = null;
+let timelineChart = null;
+let liveFeedTimer = null;
 let logsState = { page: 1, page_size: 25, total_pages: 1 };
 let logsDebounceTimer = null;
 
@@ -1135,6 +1349,139 @@ async function loadOverview() {
   } catch (e) {
     document.querySelector('#categoryTable tbody').innerHTML = errorRow(2, e.message);
   }
+
+  loadTimeline();
+  loadTopEntities();
+  loadLiveFeed();
+  startLiveFeedPolling();
+}
+
+// ===== Activity-over-time trend chart =====
+async function loadTimeline() {
+  try {
+    const data = await apiGet('/overview/timeline?hours=24&buckets=24');
+    renderTimelineChart(data.labels || [], data.total || [], data.anomalies || []);
+  } catch (e) {
+    console.error('Timeline load failed:', e.message);
+  }
+}
+
+function renderTimelineChart(labels, total, anomalies) {
+  const ctx = document.getElementById('timelineChart');
+  if (timelineChart) timelineChart.destroy();
+  const isLight = document.body.classList.contains('light-mode');
+  const legendColor = getComputedStyle(document.body).getPropertyValue('--chart-legend-color').trim() || '#7C8B9C';
+  const gridColor = isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.07)';
+
+  timelineChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Events',
+          data: total,
+          borderColor: '#2DD4BF',
+          backgroundColor: 'rgba(45, 212, 191, 0.12)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          borderWidth: 2,
+        },
+        {
+          label: 'Anomalies',
+          data: anomalies,
+          borderColor: '#F0465B',
+          backgroundColor: 'rgba(240, 70, 91, 0.14)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          borderWidth: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'bottom', labels: { color: legendColor, font: { family: 'IBM Plex Mono', size: 10 }, padding: 12 } },
+      },
+      scales: {
+        x: { ticks: { color: legendColor, maxTicksLimit: 8, font: { size: 10 } }, grid: { color: gridColor } },
+        y: { beginAtZero: true, ticks: { color: legendColor, precision: 0, font: { size: 10 } }, grid: { color: gridColor } },
+      },
+    },
+  });
+}
+
+// ===== Top offenders (IPs + users) =====
+async function loadTopEntities() {
+  const ipsEl = document.getElementById('topIpsList');
+  const usersEl = document.getElementById('topUsersList');
+  try {
+    const data = await apiGet('/overview/top-entities?scan_limit=500&top_n=5');
+    ipsEl.innerHTML = renderTopEntityRows(data.top_ips || [], 'ip');
+    usersEl.innerHTML = renderTopEntityRows(data.top_users || [], 'user_id');
+  } catch (e) {
+    ipsEl.innerHTML = `<p class="lstm-hint">Couldn't load: ${e.message}</p>`;
+    usersEl.innerHTML = '<p class="lstm-hint">—</p>';
+  }
+}
+
+function renderTopEntityRows(rows, keyField) {
+  if (!rows.length) {
+    return '<p class="lstm-hint">No activity yet.</p>';
+  }
+  return rows.map(r => `
+    <div class="top-entity-row">
+      <code class="inline">${r[keyField]}</code>
+      <span class="top-entity-count">${r.count}×</span>
+      ${severityBadge(r.max_level)}
+    </div>
+  `).join('');
+}
+
+// ===== Live activity feed (polls /logs, auto-refreshes while on Overview) =====
+async function loadLiveFeed() {
+  const el = document.getElementById('liveFeedList');
+  try {
+    const data = await apiGet('/logs?page=1&page_size=12');
+    const results = data.results || [];
+    if (!results.length) {
+      el.innerHTML = '<p class="lstm-hint">No events logged yet.</p>';
+      return;
+    }
+    el.innerHTML = results.map(r => `
+      <div class="live-feed-item">
+        <span class="live-feed-time">${formatFeedTime(r.timestamp)}</span>
+        <code class="inline">${r.ip || '—'}</code>
+        <span class="live-feed-type">${r.event_type || '—'}</span>
+        ${severityBadge(r.severity)}
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<p class="lstm-hint">Couldn't load activity: ${e.message}</p>`;
+  }
+}
+
+function formatFeedTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return ts;
+  const diffMin = Math.round((Date.now() - d.getTime()) / 60000);
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  return d.toLocaleDateString();
+}
+
+function startLiveFeedPolling() {
+  if (liveFeedTimer) clearInterval(liveFeedTimer);
+  liveFeedTimer = setInterval(() => {
+    if (activeTab === 'overview') loadLiveFeed();
+  }, 8000);
 }
 
 function renderCategoryChart(labels, values) {
@@ -1167,18 +1514,20 @@ function renderCategoryChart(labels, values) {
 // ===== Threats =====
 async function loadThreats() {
   const tbody = document.getElementById('threatsBody');
-  tbody.innerHTML = '<tr class="loading-row"><td colspan="6">Loading…</td></tr>';
+  tbody.innerHTML = '<tr class="loading-row"><td colspan="7">Loading…</td></tr>';
   const anomalyOnly = document.getElementById('threatsAnomalyOnly').checked;
+  const grouped = document.getElementById('threatsGroupIncidents').checked;
   try {
-    const data = await apiGet(`/threats?limit=100&anomaly_only=${anomalyOnly}`);
+    const data = await apiGet(`/threats?limit=100&anomaly_only=${anomalyOnly}&group_incidents=${grouped}`);
     const results = data.results || [];
     if (results.length === 0) {
-      tbody.innerHTML = emptyRow(6, 'No threats detected', 'Threat events will appear here once logged via /detect.');
+      tbody.innerHTML = emptyRow(7, 'No threats detected', 'Threat events will appear here once logged via /detect.');
       return;
     }
     tbody.innerHTML = results.map(r => `
       <tr>
-        <td>${r.timestamp || '—'}</td>
+        <td>${formatFeedTime(r.last_seen || r.timestamp)}</td>
+        <td>${r.count ? r.count + '×' : '1×'}</td>
         <td><code class="inline">${r.ip || '—'}</code></td>
         <td>${r.event_type || '—'}</td>
         <td>${severityBadge(r.risk_level || r.severity)}</td>
@@ -1187,7 +1536,7 @@ async function loadThreats() {
       </tr>
     `).join('');
   } catch (e) {
-    tbody.innerHTML = errorRow(6, e.message);
+    tbody.innerHTML = errorRow(7, e.message);
   }
 }
 
@@ -1227,6 +1576,7 @@ async function loadUserBehavior() {
   const tbody = document.getElementById('userBehaviorBody');
   tbody.innerHTML = '<tr class="loading-row"><td colspan="5">Loading…</td></tr>';
   const userId = document.getElementById('userBehaviorFilter').value.trim();
+  loadLstmRisk(userId); // runs independently of the events table below
   const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
   try {
     const data = await apiGet(`/user-behavior${qs}`);
@@ -1246,6 +1596,77 @@ async function loadUserBehavior() {
     `).join('');
   } catch (e) {
     tbody.innerHTML = errorRow(5, e.message);
+  }
+}
+
+// ===== Hybrid risk assessment (rule-based + LSTM fusion, per user) =====
+// Powers the panel above the User Behavior table. Only meaningful for a
+// single user at a time — so it's hidden until a user ID is entered above.
+async function loadLstmRisk(userId) {
+  const panel = document.getElementById('lstmRiskPanel');
+  const content = document.getElementById('lstmRiskContent');
+  const tag = document.getElementById('lstmUserTag');
+
+  if (!userId) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  tag.textContent = userId;
+  content.innerHTML = '<p class="lstm-hint">Scoring recent activity…</p>';
+
+  try {
+    const data = await apiGet(`/user-behavior/${encodeURIComponent(userId)}/hybrid-risk`);
+
+    if (!data.available) {
+      content.innerHTML = `<p class="lstm-hint">${data.reason || 'Not enough recent activity to score this user yet.'}</p>`;
+      return;
+    }
+
+    const rule = data.components.rule_based;
+    const lstm = data.components.lstm_behavioral;
+    const isAnomaly = !!data.hybrid_anomaly;
+
+    const lstmRowHtml = lstm.available
+      ? `${severityBadge(lstm.anomaly ? 'critical' : 'low')}<span class="hybrid-component-score">${lstm.score}</span>`
+      : `<span class="lstm-hint">${lstm.reason || 'Not enough sequence history yet'}</span>`;
+
+    const topFeaturesHtml = (lstm.top_features && lstm.top_features.length)
+      ? `<div class="xai-block">
+           <div class="top-entities-heading">Top contributing signals (XAI)</div>
+           <div class="xai-chips">
+             ${lstm.top_features.map(f => `<span class="xai-chip">${f.label} <b>${f.contribution_pct}%</b></span>`).join('')}
+           </div>
+         </div>`
+      : '';
+
+    content.innerHTML = `
+      <div class="lstm-score-row">
+        <div class="kpi-value ${isAnomaly ? 'high' : 'accent'}">${data.unified_score}</div>
+        <div class="lstm-score-meta">
+          <span class="badge ${isAnomaly ? 'critical' : 'low'}">${isAnomaly ? 'Hybrid: anomalous' : 'Hybrid: normal'}</span>
+          <p class="lstm-hint">
+            Unified score blends the rule-based engine (50%) and the LSTM behavioral model (50%),
+            and escalates if either model flags anomalous activity on its own.
+          </p>
+          <div class="hybrid-components">
+            <div class="hybrid-component-row">
+              <span class="hybrid-component-label">Rule-based</span>
+              ${severityBadge(rule.level)}
+              <span class="hybrid-component-score">${rule.score}</span>
+            </div>
+            <div class="hybrid-component-row">
+              <span class="hybrid-component-label">LSTM behavioral</span>
+              ${lstmRowHtml}
+            </div>
+          </div>
+          ${topFeaturesHtml}
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    content.innerHTML = `<p class="lstm-hint">Couldn't load hybrid risk score: ${e.message}</p>`;
   }
 }
 
@@ -1379,9 +1800,9 @@ loadOverview();
     localStorage.setItem('siem-dashboard-theme', isLight ? 'light' : 'dark');
     updateThemeButton();
 
-    // Rebuild the doughnut chart so its legend text and slice borders
-    // pick up the new theme's colors, then trigger a resize for anything
-    // else listening for layout changes.
+    // Rebuild the category donut and the timeline chart so their legend
+    // text, slice borders, and gridlines pick up the new theme's colors,
+    // then trigger a resize for anything else listening for layout changes.
     if (typeof loadOverview === 'function' && activeTab === 'overview') {
       loadOverview();
     }

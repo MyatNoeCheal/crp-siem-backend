@@ -4,7 +4,10 @@ from fastapi import FastAPI, Query, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from typing import Optional
+from datetime import datetime, timedelta
 import os
+import json
+import math
 
 from ai.detector import AnomalyDetector
 from models import LogData, LogEvent
@@ -43,6 +46,119 @@ logs_collection = db.logs
 
 
 # =========================
+# DEMO DATA AUTO-SEEDING
+# =========================
+# On a brand-new deployment (e.g. a fresh Render instance / empty MongoDB
+# Atlas cluster) all 7 dashboard tabs would otherwise be blank until real
+# events start flowing in. This inserts a small, realistic demo dataset
+# the FIRST time the app starts against an empty `logs` collection, so the
+# live URL is never a wall of "no data yet" empty states.
+#
+# Safe to leave in permanently: it checks logs_collection.count_documents({})
+# and does nothing once there's any data, so it will not duplicate events
+# on every restart/redeploy (Render's free tier spins the service down and
+# back up often) or interfere once real e-commerce traffic is connected.
+def _demo_events():
+    """Builds the demo event list with timestamps relative to *now*, so the
+    seeded data always looks recent instead of embedding a fixed past date."""
+    now = datetime.utcnow()
+
+    def ts(minutes_ago):
+        return (now - timedelta(minutes=minutes_ago)).isoformat()
+
+    events = [
+        # --- Threats: brute-force burst from one IP, then a port scan ---
+        {"ip": "203.0.113.14", "event_type": "failed_login", "severity": "high",
+         "timestamp": ts(58), "role": "user"},
+        {"ip": "203.0.113.14", "event_type": "failed_login", "severity": "high",
+         "timestamp": ts(57), "role": "user"},
+        {"ip": "203.0.113.14", "event_type": "failed_login", "severity": "high",
+         "timestamp": ts(56), "role": "user"},
+        {"ip": "203.0.113.14", "event_type": "failed_login", "severity": "high",
+         "timestamp": ts(55), "role": "user"},
+        {"ip": "203.0.113.14", "event_type": "failed_login", "severity": "high",
+         "timestamp": ts(54), "role": "user"},  # 5th trips the threshold rule
+        {"ip": "198.51.100.23", "event_type": "port_scan", "severity": "high",
+         "timestamp": ts(50), "role": "user"},
+
+        # --- Fraud: a spread of transaction sizes, one clearly high-risk ---
+        {"ip": "192.0.2.55", "event_type": "payment", "severity": "medium",
+         "timestamp": ts(45), "user_id": "cust_2210", "amount": 1899.99, "role": "user"},
+        {"ip": "192.0.2.71", "event_type": "transaction", "severity": "low",
+         "timestamp": ts(40), "user_id": "cust_5521", "amount": 45.50, "role": "user"},
+        {"ip": "192.0.2.90", "event_type": "refund", "severity": "medium",
+         "timestamp": ts(35), "user_id": "cust_3390", "amount": 2200.00, "role": "user"},
+        {"ip": "192.0.2.14", "event_type": "chargeback", "severity": "high",
+         "timestamp": ts(30), "user_id": "cust_8871", "amount": 5400.00, "role": "user"},
+
+        # --- User Behavior: one customer (cust_1120) gets a full session of
+        # 6 events so the LSTM Behavioral Risk panel has enough history
+        # (min_events=5) to actually score them on the User Behavior tab. ---
+        {"ip": "10.0.0.5", "event_type": "login", "severity": "low",
+         "timestamp": ts(29), "user_id": "cust_1120", "role": "user"},
+        {"ip": "10.0.0.5", "event_type": "browse", "severity": "low",
+         "timestamp": ts(27), "user_id": "cust_1120", "role": "user"},
+        {"ip": "10.0.0.5", "event_type": "add_to_cart", "severity": "low",
+         "timestamp": ts(25), "user_id": "cust_1120", "role": "user"},
+        {"ip": "10.0.0.5", "event_type": "checkout", "severity": "low",
+         "timestamp": ts(23), "user_id": "cust_1120", "role": "user"},
+        {"ip": "10.0.0.5", "event_type": "payment", "severity": "medium",
+         "timestamp": ts(22), "user_id": "cust_1120", "amount": 129.00, "role": "user"},
+        {"ip": "10.0.0.5", "event_type": "logout", "severity": "low",
+         "timestamp": ts(20), "user_id": "cust_1120", "role": "user"},
+
+        # A couple of standalone behavior events for other users, for the
+        # plain events table.
+        {"ip": "10.0.0.6", "event_type": "profile_update", "severity": "low",
+         "timestamp": ts(18), "user_id": "cust_1121", "role": "user"},
+        {"ip": "10.0.0.7", "event_type": "password_change", "severity": "medium",
+         "timestamp": ts(15), "user_id": "cust_1122", "role": "user"},
+
+        # --- Admin Activity ---
+        {"ip": "172.16.0.2", "event_type": "admin_login", "severity": "medium",
+         "timestamp": ts(12), "user_id": "admin_greg", "role": "admin"},
+        {"ip": "172.16.0.2", "event_type": "config_change", "severity": "high",
+         "timestamp": ts(11), "user_id": "admin_greg", "role": "admin"},
+        {"ip": "172.16.0.3", "event_type": "role_change", "severity": "high",
+         "timestamp": ts(9), "user_id": "admin_sara", "role": "admin"},
+        {"ip": "172.16.0.4", "event_type": "user_delete", "severity": "critical",
+         "timestamp": ts(7), "user_id": "admin_sara", "role": "admin"},
+    ]
+    return events
+
+
+def seed_demo_data():
+    if logs_collection.count_documents({}) > 0:
+        return  # already has data (real traffic or a previous seed) -- leave it alone
+
+    print("logs collection is empty -- seeding demo dataset...")
+    inserted = 0
+    for raw in _demo_events():
+        try:
+            event = LogEvent(**raw)
+            score, reasons, category = detector.analyze(event)
+            logs_collection.insert_one({
+                **event.dict(),
+                "category": category,
+                "risk_score": score,
+                "risk_level": get_risk_level(score),
+                "anomaly": score >= 50,
+                "reason": reasons,
+            })
+            inserted += 1
+        except Exception as e:
+            print(f"  skipped one demo event ({raw.get('event_type')}): {e}")
+
+    print(f"Seeded {inserted} demo events.")
+
+
+@app.on_event("startup")
+def _on_startup():
+    seed_demo_data()
+
+
+
+# =========================
 # API KEY PROTECTION (for write/ingestion endpoints)
 # =========================
 # Set an environment variable before starting uvicorn:
@@ -63,6 +179,97 @@ def require_api_key(x_api_key: Optional[str] = Header(default=None)):
         return  # no key configured — open for local dev
     if x_api_key != _API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
+
+
+# =========================
+# HYBRID RISK FUSION — weighted log-odds evidence fusion
+# =========================
+# Replaces a flat 0.5*rule + 0.5*lstm average with fusion that first
+# converts each component into a calibrated probability (using each
+# model's own validation statistics), then combines them as independent
+# evidence in log-odds space -- the standard "naive Bayes" evidence-fusion
+# idea, applied here without needing labeled hybrid-anomaly examples
+# (which don't exist across your two datasets -- email.csv and
+# creditcard.csv have no shared label space, and live SIEM events have no
+# ground truth at all).
+with open(os.path.join(os.path.dirname(__file__), "lstm_threshold.json")) as _f:
+    _LSTM_META = json.load(_f)
+
+# Rule-based calibration: centered on the "High" boundary from
+# get_risk_level() (utils.py) -- the point where the rule engine itself
+# calls an event high-risk. Scale chosen so a Critical-level score (85)
+# maps to p ≈ 0.9: p=0.5 at High, climbing steeply toward Critical.
+RULE_LOGIT_CENTER = 60.0
+RULE_LOGIT_SCALE = 12.0
+
+# LSTM calibration: centered on the model's own anomaly threshold
+# (lstm_threshold.json), scaled by the validation-set reconstruction
+# error's standard deviation -- p=0.5 exactly at the threshold, moving by
+# one "typical validation deviation" per unit of z.
+LSTM_ERROR_CENTER = _LSTM_META["threshold"]
+LSTM_ERROR_SCALE = _LSTM_META["val_reconstruction_error"]["std"] or 1e-6
+
+# Fusion weights. Equal by default. To retune: score the CERT sequences
+# in lstm_top_anomalies.csv (known highest-error sequences) alongside
+# their rule-based scores, and grid-search these for the split that best
+# separates the flagged top-N from the rest.
+FUSION_WEIGHT_RULE = 0.5
+FUSION_WEIGHT_LSTM = 0.5
+
+
+def _sigmoid(x):
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def _logit(p, eps=1e-6):
+    p = min(max(p, eps), 1 - eps)
+    return math.log(p / (1 - p))
+
+
+def _rule_probability(rule_score):
+    """Rule-based 0-100 score -> calibrated probability."""
+    z = (rule_score - RULE_LOGIT_CENTER) / RULE_LOGIT_SCALE
+    return _sigmoid(z)
+
+
+def _lstm_probability(reconstruction_error):
+    """LSTM reconstruction error -> calibrated probability, using the
+    model's own validation threshold and spread."""
+    z = (reconstruction_error - LSTM_ERROR_CENTER) / LSTM_ERROR_SCALE
+    return _sigmoid(z)
+
+
+def fuse_hybrid_score(rule_score, lstm_result):
+    """
+    Combines the rule-based score and the LSTM's result into one unified
+    0-100 score via weighted log-odds fusion.
+
+    rule_score: 0-100 float from the rule engine (max over recent events)
+    lstm_result: dict from score_user_sequence() -- may have
+                 available=False if there isn't enough sequence history.
+
+    Returns: (unified_score: float, detail: dict) -- detail exposes the
+             per-component probabilities for transparency/debugging, and
+             is handy for worked examples in the Evaluation Framework
+             section (e.g. "event X: p_rule=0.71, p_lstm=0.44 -> p=0.66").
+    """
+    p_rule = _rule_probability(rule_score)
+
+    if lstm_result.get("available"):
+        p_lstm = _lstm_probability(lstm_result["reconstruction_error"])
+        combined_logit = (
+            FUSION_WEIGHT_RULE * _logit(p_rule)
+            + FUSION_WEIGHT_LSTM * _logit(p_lstm)
+        )
+        unified_p = _sigmoid(combined_logit)
+        detail = {"p_rule": round(p_rule, 4), "p_lstm": round(p_lstm, 4), "p_unified": round(unified_p, 4)}
+    else:
+        # No sequence history yet -- fall back to the rule-based
+        # probability alone rather than guessing at a fused number.
+        unified_p = p_rule
+        detail = {"p_rule": round(p_rule, 4), "p_lstm": None, "p_unified": round(p_rule, 4)}
+
+    return round(unified_p * 100, 1), detail
 
 
 # Root test
@@ -175,7 +382,8 @@ def detect(event: LogEvent):
         "category": category,
         "risk_score": score,
         "risk_level": level,
-        "anomaly": is_anomaly
+        "anomaly": is_anomaly,
+        "reason": reasons,
     })
 
     return {
@@ -211,22 +419,188 @@ def overview():
     }
 
 
+def _parse_ts(value):
+    """Best-effort parser for the timestamp strings clients send us --
+    they're plain strings on LogEvent, not a Mongo Date type, so we parse
+    on read rather than relying on Mongo to sort/bucket them for us."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+# =========================
+# OVERVIEW: EVENTS-OVER-TIME TREND (for the Overview trend chart)
+# =========================
+@app.get("/overview/timeline")
+def overview_timeline(hours: int = 24, buckets: int = 24, scan_limit: int = 3000):
+    """
+    Buckets recent events into evenly-sized time windows so the Overview
+    tab can plot volume over time -- the thing a real SOC dashboard is
+    fundamentally built around -- instead of only a point-in-time snapshot.
+    """
+    now = datetime.utcnow()
+    window = timedelta(hours=hours)
+    window_start = now - window
+    bucket_size = window / buckets
+
+    labels = []
+    for i in range(buckets):
+        b_start = window_start + bucket_size * i
+        labels.append(b_start.strftime("%H:%M") if hours <= 48 else b_start.strftime("%m/%d"))
+
+    total_counts = [0] * buckets
+    anomaly_counts = [0] * buckets
+
+    cursor = logs_collection.find(
+        {}, {"timestamp": 1, "anomaly": 1}
+    ).sort("_id", -1).limit(scan_limit)
+
+    for doc in cursor:
+        ts = _parse_ts(doc.get("timestamp"))
+        if ts is None or ts < window_start or ts > now:
+            continue
+        idx = int((ts - window_start) / bucket_size)
+        idx = min(max(idx, 0), buckets - 1)
+        total_counts[idx] += 1
+        if doc.get("anomaly"):
+            anomaly_counts[idx] += 1
+
+    return {
+        "labels": labels,
+        "total": total_counts,
+        "anomalies": anomaly_counts,
+        "hours": hours,
+    }
+
+
+# =========================
+# OVERVIEW: TOP OFFENDING IPs / RISKIEST USERS
+# =========================
+@app.get("/overview/top-entities")
+def overview_top_entities(scan_limit: int = 500, top_n: int = 5):
+    """
+    Surfaces the "top offenders" panel a SOC analyst checks first: which
+    IPs and users generated the most events recently, and the highest
+    risk seen from each, computed over the most recent `scan_limit` events.
+    """
+    cursor = logs_collection.find(
+        {}, {"ip": 1, "user_id": 1, "risk_score": 1, "risk_level": 1}
+    ).sort("_id", -1).limit(scan_limit)
+
+    ip_stats = {}
+    user_stats = {}
+
+    def _bump(stats, key, field_name, doc):
+        entry = stats.setdefault(key, {field_name: key, "count": 0, "max_risk": 0, "max_level": "Low"})
+        entry["count"] += 1
+        score = doc.get("risk_score") or 0
+        if score >= entry["max_risk"]:
+            entry["max_risk"] = score
+            entry["max_level"] = doc.get("risk_level") or entry["max_level"]
+
+    for doc in cursor:
+        if doc.get("ip"):
+            _bump(ip_stats, doc["ip"], "ip", doc)
+        if doc.get("user_id"):
+            _bump(user_stats, doc["user_id"], "user_id", doc)
+
+    top_ips = sorted(ip_stats.values(), key=lambda x: (-x["count"], -x["max_risk"]))[:top_n]
+    top_users = sorted(user_stats.values(), key=lambda x: (-x["count"], -x["max_risk"]))[:top_n]
+
+    return {"top_ips": top_ips, "top_users": top_users}
+
+
 # =========================
 # THREATS TAB
 # =========================
+def _correlate_incidents(events, window_minutes=10):
+    """
+    Groups repeated events sharing the same IP + event_type into a single
+    incident when they occur within `window_minutes` of each other -- e.g.
+    5 failed_login attempts become one "5x failed_login" incident, the way
+    a real SIEM correlates raw events instead of listing each one alone.
+    Events not sharing an IP+event_type with a recent neighbor stay as
+    their own single-event incident, so nothing is dropped.
+    """
+    window = timedelta(minutes=window_minutes)
+    ordered = sorted(events, key=lambda e: _parse_ts(e.get("timestamp")) or datetime.min)
+
+    open_incidents = {}   # (ip, event_type) -> incident dict, while still within the window
+    incidents = []
+
+    for e in ordered:
+        ts = _parse_ts(e.get("timestamp"))
+        key = (e.get("ip"), e.get("event_type"))
+        inc = open_incidents.get(key)
+
+        if inc and ts and inc["_last_ts"] and (ts - inc["_last_ts"]) <= window:
+            inc["count"] += 1
+            inc["last_seen"] = e.get("timestamp")
+            inc["_last_ts"] = ts
+            score = e.get("risk_score") or 0
+            if score >= inc["risk_score"]:
+                inc["risk_score"] = score
+                inc["risk_level"] = e.get("risk_level")
+            if e.get("anomaly"):
+                inc["anomaly"] = True
+            for r in (e.get("reason") or []):
+                if r not in inc["reason"]:
+                    inc["reason"].append(r)
+        else:
+            inc = {
+                "ip": e.get("ip"),
+                "user_id": e.get("user_id"),
+                "event_type": e.get("event_type"),
+                "count": 1,
+                "first_seen": e.get("timestamp"),
+                "last_seen": e.get("timestamp"),
+                "_last_ts": ts,
+                "risk_score": e.get("risk_score") or 0,
+                "risk_level": e.get("risk_level"),
+                "anomaly": bool(e.get("anomaly")),
+                "reason": list(e.get("reason") or []),
+            }
+            open_incidents[key] = inc
+            incidents.append(inc)
+
+    for inc in incidents:
+        inc.pop("_last_ts", None)
+
+    # Most recent / most severe incidents first
+    incidents.sort(key=lambda i: (i["last_seen"] or "", i["risk_score"]), reverse=True)
+    return incidents
+
+
 @app.get("/threats")
-def threats(limit: int = 100, anomaly_only: bool = True):
+def threats(limit: int = 100, anomaly_only: bool = True, group_incidents: bool = True,
+            correlation_window_minutes: int = 10, scan_limit: int = 500):
     query = {"category": "threat"}
     if anomaly_only:
         query["anomaly"] = True
 
-    cursor = logs_collection.find(query).sort("_id", -1).limit(limit)
-    results = []
-    for log in cursor:
-        log["_id"] = str(log["_id"])
-        results.append(log)
+    if not group_incidents:
+        cursor = logs_collection.find(query).sort("_id", -1).limit(limit)
+        results = []
+        for log in cursor:
+            log["_id"] = str(log["_id"])
+            results.append(log)
+        return {"results": results, "count": len(results), "grouped": False}
 
-    return {"results": results, "count": len(results)}
+    # Correlated view: scan a wider pool of raw events, group them into
+    # incidents, then hand back the most relevant `limit` incidents.
+    cursor = logs_collection.find(query).sort("_id", -1).limit(scan_limit)
+    raw_events = list(cursor)
+    incidents = _correlate_incidents(raw_events, window_minutes=correlation_window_minutes)
+
+    return {
+        "results": incidents[:limit],
+        "count": len(incidents),
+        "grouped": True,
+        "raw_event_count": len(raw_events),
+    }
 
 
 # =========================
@@ -283,6 +657,84 @@ def user_behavior_lstm_risk(user_id: str):
         logs_collection.find({"user_id": user_id}).sort("timestamp", 1).limit(15)
     )
     return score_user_sequence(events)
+
+
+# =========================
+# HYBRID RISK (per user) — Objective 4/hypothesis from the proposal:
+# "A hybrid approach integrating Autoencoders, LSTM... is expected to
+# perform better... than relying on a single detection technique."
+# Fuses the rule-based engine's recent risk for this user with the LSTM's
+# sequence-based behavioral score into one unified score + decision,
+# via weighted log-odds fusion (see fuse_hybrid_score() above).
+#
+# The fraud Autoencoder is deliberately NOT included in this live fusion:
+# it requires the PCA-anonymized V1-V28 feature vector from the training
+# dataset, which live application events don't produce (see the docstring
+# in fraud-inference.py). Including it here would mean silently feeding
+# it zeros/garbage for those 28 features, which would be dishonest rather
+# than a real hybrid signal -- so it stays evaluated offline instead,
+# with real metrics in metrics_summary.json.
+# =========================
+@app.get("/user-behavior/{user_id}/hybrid-risk")
+def user_behavior_hybrid_risk(user_id: str, recent_limit: int = 20):
+    recent_events = list(
+        logs_collection.find({"user_id": user_id}).sort("_id", -1).limit(recent_limit)
+    )
+    if not recent_events:
+        return {"available": False, "reason": f"No recent events found for user '{user_id}'."}
+
+    rule_max_score = max((e.get("risk_score") or 0) for e in recent_events)
+    rule_anomaly = any(bool(e.get("anomaly")) for e in recent_events)
+    rule_level = get_risk_level(rule_max_score)
+
+    seq_events = list(
+        logs_collection.find({"user_id": user_id}).sort("timestamp", 1).limit(15)
+    )
+    lstm_result = score_user_sequence(seq_events)
+
+    lstm_score = lstm_result.get("behavior_score")
+    lstm_anomaly = lstm_result.get("is_anomaly", False)
+
+    unified_score, fusion_detail = fuse_hybrid_score(rule_max_score, lstm_result)
+
+    # OR-ensemble decision: either model firing is enough to escalate.
+    # Chosen deliberately over requiring both to agree, since a false
+    # negative (missed threat) is more costly than a false positive here.
+    hybrid_anomaly = rule_anomaly or lstm_anomaly
+
+    return {
+        "available": True,
+        "user_id": user_id,
+        "unified_score": unified_score,
+        "unified_level": get_risk_level(unified_score),
+        "hybrid_anomaly": hybrid_anomaly,
+        "fusion_method": "weighted_log_odds_fusion + OR_ensemble_decision",
+        "fusion_detail": fusion_detail,
+        "components": {
+            "rule_based": {
+                "score": rule_max_score,
+                "level": rule_level,
+                "anomaly": rule_anomaly,
+                "events_considered": len(recent_events),
+            },
+            "lstm_behavioral": {
+                "available": lstm_result.get("available", False),
+                "score": lstm_score,
+                "anomaly": lstm_anomaly,
+                "top_features": lstm_result.get("top_features", []),
+                "reason": lstm_result.get("reason"),
+            },
+        },
+        "note": (
+            "Fuses rule-based risk with LSTM sequence-based behavioral risk "
+            "using weighted log-odds fusion: each component is converted to "
+            "a calibrated probability using its own validation statistics, "
+            "then combined as independent evidence in log-odds space. The "
+            "fraud Autoencoder is evaluated offline only -- see "
+            "fraud-inference.py and metrics_summary.json -- because it needs "
+            "the PCA-anonymized feature vector live events don't produce."
+        ),
+    }
 
 
 # =========================

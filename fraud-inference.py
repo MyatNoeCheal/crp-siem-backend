@@ -57,10 +57,51 @@ def _load():
         _feature_cols = meta["feature_cols"]
 
 
+def explain_transaction(row, top_n=5):
+    """
+    Explainable-AI step for a single transaction: decomposes its total
+    reconstruction error into a per-feature contribution and returns the
+    top_n features that drove the anomaly score, using the same
+    reconstruction-error attribution idea as lstm_inference.py's
+    _feature_attribution().
+
+    IMPORTANT HONEST LIMITATION -- state this in your report's Critical
+    Evaluation / XAI section: V1-V28 are PCA-anonymized by the dataset
+    provider, so this can tell you *that* e.g. "V14" and "V4" drove the
+    flag, but not what V14/V4 actually represent in business terms (unlike
+    the LSTM's features, which are human-readable). This is a genuine,
+    literature-documented limitation of using this dataset for XAI, not a
+    bug -- Villegas-Ch et al. (2025) and B.V (2025) both note this kind of
+    interpretability gap for PCA-anonymized fraud data.
+
+    row: a single-row pandas Series/DataFrame row with Time, V1..V28, Amount.
+    Returns: [{"feature": str, "contribution_pct": float}, ...]
+    """
+    _load()
+
+    X = row[_feature_cols].to_frame().T.copy()
+    X[["Time", "Amount"]] = _scaler.transform(X[["Time", "Amount"]])
+
+    recon = _model.predict(X.values)
+    sq_err = np.square(X.values - recon)[0]
+    total = float(sq_err.sum()) or 1e-9
+
+    order = np.argsort(-sq_err)[:top_n]
+    return [
+        {"feature": _feature_cols[i], "contribution_pct": round(float(sq_err[i] / total * 100), 1)}
+        for i in order
+    ]
+
+
 def score_transactions(df: pd.DataFrame):
     """
     df must contain columns: Time, V1..V28, Amount
     Returns a DataFrame with added columns: reconstruction_error, is_fraud, fraud_score
+
+    For a per-transaction feature explanation (which V-features drove a
+    specific flag), use explain_transaction() on a single row instead --
+    kept separate since attribution is best read one transaction at a
+    time, not as an extra column on a bulk-scored DataFrame.
     """
     _load()
 
@@ -84,3 +125,10 @@ if __name__ == "__main__":
     sample = pd.read_csv("dataset/cert/creditcard.csv").sample(10, random_state=1)
     scored = score_transactions(sample)
     print(scored[["Class", "reconstruction_error", "is_fraud", "fraud_score"]])
+
+    # Show the XAI explanation for the single highest-scoring row in the sample
+    top_row = scored.loc[scored["fraud_score"].idxmax()]
+    print(f"\nTop contributing features (XAI) for the highest-scored row "
+          f"(fraud_score={top_row['fraud_score']}):")
+    for f in explain_transaction(sample.loc[top_row.name]):
+        print(f"  {f['feature']}: {f['contribution_pct']}%")

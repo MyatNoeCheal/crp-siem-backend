@@ -11,5 +11,23 @@
     "false_positive": 31,
     "false_negative": 38,
     "true_positive": 36
-  }
+  },
+  "top_feature_attribution_pct": {
+    "V17": 29.37,
+    "V12": 14.94,
+    "V14": 9.54,
+    "V16": 8.9,
+    "V10": 7.12,
+    "V3": 5.23,
+    "V18": 4.0,
+    "V7": 3.86,
+    "V11": 3.35,
+    "V5": 2.63,
+    "V4": 2.13,
+    "V9": 1.71,
+    "V21": 1.25,
+    "V2": 1.22,
+    "V1": 1.04
+  },
+  "xai_note": "V1-V28 are PCA-anonymized by the dataset provider -- this shows WHICH features drive fraud flags, not what they mean in business terms. State this limitation explicitly in the report's XAI discussion."
 }

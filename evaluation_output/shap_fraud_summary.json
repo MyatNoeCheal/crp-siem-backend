@@ -1,0 +1,29 @@
+{
+  "background_size": 60,
+  "explained_size": 40,
+  "explained_fraud_count": 20,
+  "explained_normal_count": 20,
+  "top_shap_feature_attribution_pct": {
+    "V17": 27.16,
+    "V14": 17.49,
+    "V7": 7.28,
+    "V16": 6.92,
+    "V12": 6.26,
+    "V3": 5.98,
+    "V1": 4.86,
+    "V5": 4.32,
+    "V8": 3.92,
+    "V9": 3.9,
+    "V18": 3.59,
+    "V2": 2.75,
+    "V13": 1.68,
+    "V4": 1.32,
+    "V11": 0.64
+  },
+  "fast_vs_shap_correlation": {
+    "spearman_rho": 0.586,
+    "p_value": 0.0218,
+    "n_features_compared": 15
+  },
+  "note": "SHAP explains reconstruction error via shap.KernelExplainer (model-agnostic, since the Autoencoder is a scikit-learn MLPRegressor). This validates the live/fast reconstruction-error attribution used in fraud-inference.py's explain_transaction() -- see fast_vs_shap_correlation for how closely their feature rankings agree."
+}

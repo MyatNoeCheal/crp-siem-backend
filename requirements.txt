@@ -11,3 +11,9 @@ torch
 joblib
 matplotlib
 scikit-learn
+
+# For shap_evaluate_fraud.py / shap_evaluate_lstm.py (offline SHAP
+# validation of the fast reconstruction-error attribution). Not needed
+# for the live API -- only for the report evaluation scripts.
+shap
+scipy
