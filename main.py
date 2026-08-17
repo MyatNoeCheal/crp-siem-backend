@@ -20,6 +20,8 @@ from ai_insights import generate_insights
 from lstm_inference import score_user_sequence
 from fraud_stream import generate_simulated_fraud_events
 from network_stream import generate_simulated_network_events
+from mitre_attack import get_mitre_mapping
+from threat_intel import enrich_ip
 
 import dataset.scripts.clean_email as ce
 
@@ -81,7 +83,8 @@ class AlertStatusUpdate(BaseModel):
     note: Optional[str] = None
 
 
-def _upsert_alert(event_dict, score, level, is_anomaly, reasons, category):
+def _upsert_alert(event_dict, score, level, is_anomaly, reasons, category,
+                   mitre=None, threat_intel=None):
     """
     Creates or updates a persistent alert for an anomalous event.
 
@@ -97,6 +100,14 @@ def _upsert_alert(event_dict, score, level, is_anomaly, reasons, category):
     a duplicate alert. A resolved/false-positive alert is deliberately
     NOT matched here -- once an analyst has closed it, a new occurrence
     should open a fresh alert rather than silently reopening a closed one.
+
+    mitre / threat_intel: optional enrichment dicts (see mitre_attack.py
+    and threat_intel.py) attached to the alert for display on the
+    Threats/Admin Activity tabs. On merge into an existing alert, a
+    freshly-provided value overwrites the stored one; None preserves
+    whatever the alert already had (so a caller that doesn't compute
+    enrichment, e.g. the simulated streams, doesn't blank out earlier
+    enrichment on merge).
 
     Returns the alert's _id (new or existing), or None if not anomalous.
     """
@@ -139,6 +150,8 @@ def _upsert_alert(event_dict, score, level, is_anomaly, reasons, category):
                     "risk_level": get_risk_level(new_score),
                     "reason": merged_reasons,
                     "updated_at": datetime.utcnow().isoformat(),
+                    "mitre": mitre or existing.get("mitre"),
+                    "threat_intel": threat_intel or existing.get("threat_intel"),
                 },
                 "$inc": {"count": 1},
             },
@@ -161,6 +174,8 @@ def _upsert_alert(event_dict, score, level, is_anomaly, reasons, category):
         "status_note": None,
         "status_updated_at": datetime.utcnow().isoformat(),
         "updated_at": datetime.utcnow().isoformat(),
+        "mitre": mitre,
+        "threat_intel": threat_intel,
     }
     result = alerts_collection.insert_one(new_alert)
     return result.inserted_id
@@ -294,6 +309,10 @@ def seed_demo_data():
             score, reasons, category = detector.analyze(event)
             level = get_risk_level(score)
             is_anomaly = score >= 50
+
+            mitre = get_mitre_mapping(event.event_type, category)
+            intel = enrich_ip(event.ip)
+
             logs_collection.insert_one({
                 **event.dict(),
                 "category": category,
@@ -301,8 +320,11 @@ def seed_demo_data():
                 "risk_level": level,
                 "anomaly": is_anomaly,
                 "reason": reasons,
+                "mitre": mitre,
+                "threat_intel": intel,
             })
-            _upsert_alert(event.dict(), score, level, is_anomaly, reasons, category)
+            _upsert_alert(event.dict(), score, level, is_anomaly, reasons, category,
+                          mitre=mitre, threat_intel=intel)
             inserted += 1
         except Exception as e:
             print(f"  skipped one demo event ({raw.get('event_type')}): {e}")
@@ -535,6 +557,12 @@ def detect(event: LogEvent):
     level = get_risk_level(score)
     is_anomaly = score >= 50
 
+    # --- Enrichment: MITRE ATT&CK technique mapping + IP threat intel ---
+    # (see mitre_attack.py / threat_intel.py). Both are None-safe -- a
+    # failed lookup or an unmapped event type never blocks ingestion.
+    mitre = get_mitre_mapping(event.event_type, category)
+    intel = enrich_ip(event.ip)
+
     logs_collection.insert_one({
         **event.dict(),
         "category": category,
@@ -542,9 +570,14 @@ def detect(event: LogEvent):
         "risk_level": level,
         "anomaly": is_anomaly,
         "reason": reasons,
+        "mitre": mitre,
+        "threat_intel": intel,
     })
 
-    alert_id = _upsert_alert(event.dict(), score, level, is_anomaly, reasons, category)
+    alert_id = _upsert_alert(
+        event.dict(), score, level, is_anomaly, reasons, category,
+        mitre=mitre, threat_intel=intel,
+    )
 
     return {
         "anomaly": is_anomaly,
@@ -552,6 +585,8 @@ def detect(event: LogEvent):
         "risk_level": level,
         "category": category,
         "reason": reasons,
+        "mitre": mitre,
+        "threat_intel": intel,
         "alert_id": str(alert_id) if alert_id else None,
     }
 
@@ -712,6 +747,44 @@ def overview_top_entities(scan_limit: int = 500, top_n: int = 5):
     top_users = sorted(user_stats.values(), key=lambda x: (-x["count"], -x["max_risk"]))[:top_n]
 
     return {"top_ips": top_ips, "top_users": top_users}
+
+
+# =========================
+# OVERVIEW: THREAT MAP — geolocated points for offending external IPs
+# =========================
+@app.get("/overview/threat-map")
+def overview_threat_map(scan_limit: int = 300, top_n: int = 15):
+    """
+    Geolocated points for the top offending external IPs -- powers a
+    world-map style panel on the Overview tab. Reads threat_intel already
+    stored on each log document (see /detect and seed_demo_data) rather
+    than re-enriching on request, so this endpoint is cheap to call.
+
+    Private IPs and IPs whose geolocation failed to resolve (e.g. the
+    RFC 5737 documentation ranges used by the demo/simulated data -- see
+    threat_intel.py's module docstring) are naturally excluded, since
+    they never got lat/lon populated in the first place.
+    """
+    cursor = logs_collection.find(
+        {"threat_intel.is_private": False, "threat_intel.lat": {"$ne": None}},
+        {"ip": 1, "threat_intel": 1, "risk_level": 1},
+    ).sort("_id", -1).limit(scan_limit)
+
+    points = {}
+    for doc in cursor:
+        intel = doc.get("threat_intel") or {}
+        ip = doc.get("ip")
+        if not ip or intel.get("lat") is None:
+            continue
+        entry = points.setdefault(ip, {
+            "ip": ip, "lat": intel.get("lat"), "lon": intel.get("lon"),
+            "country": intel.get("country"), "city": intel.get("city"),
+            "reputation": intel.get("reputation"), "count": 0,
+        })
+        entry["count"] += 1
+
+    top_points = sorted(points.values(), key=lambda p: -p["count"])[:top_n]
+    return {"points": top_points}
 
 
 # =========================

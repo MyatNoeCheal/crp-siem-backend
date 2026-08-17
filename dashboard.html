@@ -953,6 +953,38 @@
   }
   .status-select:focus { outline: none; border-color: #65A637; }
 
+  /* ===== Threat intel + MITRE ATT&CK chips (Threats / Admin tabs) ===== */
+  .intel-chip {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    vertical-align: middle;
+  }
+  .intel-chip.malicious  { background: rgba(217, 74, 74, 0.15); color: #E05A5A; }
+  .intel-chip.suspicious { background: rgba(242, 153, 74, 0.15); color: #F2994A; }
+  .intel-chip.clean      { background: rgba(101, 166, 55, 0.15); color: #8BC34A; }
+  .intel-chip.internal   { background: rgba(115, 121, 128, 0.18); color: var(--text-dim); }
+  .intel-chip.unknown    { background: rgba(115, 121, 128, 0.12); color: var(--text-dim); }
+
+  .mitre-chip {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    background: rgba(45, 212, 191, 0.12);
+    color: #2DD4BF;
+    text-decoration: none;
+    vertical-align: middle;
+  }
+  .mitre-chip:hover { text-decoration: underline; }
+
   /* ===== Responsive: collapse the sidebar into a top bar + drawer ===== */
   @media (max-width: 860px) {
     body { flex-direction: column; }
@@ -1358,6 +1390,30 @@ function severityBadge(sev) {
   return `<span class="badge ${cls}">${level}</span>`;
 }
 
+// Threat-intel origin chip: shows internal/malicious/suspicious/clean/
+// unknown next to an IP, from the enrichment attached by /detect (see
+// threat_intel.py). Never throws on missing data -- just renders nothing.
+function renderOriginChip(intel) {
+  if (!intel) return '';
+  if (intel.is_private) return `<span class="intel-chip internal">internal</span>`;
+  const rep = intel.reputation || 'unknown';
+  const repClass = ['malicious', 'suspicious', 'clean'].includes(rep) ? rep : 'unknown';
+  const label = intel.country_code
+    ? `${intel.country_code}${intel.city ? ' · ' + intel.city : ''}`
+    : rep;
+  const title = (intel.reputation_reason || intel.country || '').replace(/"/g, '&quot;');
+  return `<span class="intel-chip ${repClass}" title="${title}">${label}</span>`;
+}
+
+// MITRE ATT&CK technique chip, linking out to attack.mitre.org -- from
+// the mapping attached by /detect (see mitre_attack.py). Fraud events
+// and unmapped event types return null from the backend, so this
+// renders nothing for them (by design -- see mitre_attack.py docstring).
+function renderMitreChip(mitre) {
+  if (!mitre) return '';
+  return `<a href="${mitre.url}" target="_blank" rel="noopener" class="mitre-chip" title="${mitre.tactic}">${mitre.technique_id}</a>`;
+}
+
 function emptyRow(colspan, title, sub) {
   return `<tr><td colspan="${colspan}">
     <div class="empty-state">
@@ -1590,8 +1646,8 @@ async function loadThreats() {
       <tr>
         <td>${formatFeedTime(r.last_seen || r.timestamp)}</td>
         <td>${r.count ? r.count + '×' : '1×'}</td>
-        <td><code class="inline">${r.ip || '—'}</code></td>
-        <td>${r.event_type || '—'}</td>
+        <td><code class="inline">${r.ip || '—'}</code>${renderOriginChip(r.threat_intel)}</td>
+        <td>${r.event_type || '—'}${renderMitreChip(r.mitre)}</td>
         <td>${severityBadge(r.risk_level || r.severity)}</td>
         <td>${r.risk_score ?? '—'}</td>
         <td>${r.priority_score != null ? priorityBadge(r.priority_score) : '—'}</td>
@@ -1796,8 +1852,8 @@ async function loadAdminActivity() {
       <tr>
         <td>${r.timestamp || '—'}</td>
         <td>${r.user_id || '—'}</td>
-        <td><code class="inline">${r.ip || '—'}</code></td>
-        <td>${r.event_type || '—'}</td>
+        <td><code class="inline">${r.ip || '—'}</code>${renderOriginChip(r.threat_intel)}</td>
+        <td>${r.event_type || '—'}${renderMitreChip(r.mitre)}</td>
         <td>${severityBadge(r.risk_level || r.severity)}</td>
       </tr>
     `).join('');

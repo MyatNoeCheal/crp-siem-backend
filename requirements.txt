@@ -17,3 +17,5 @@ scikit-learn
 # for the live API -- only for the report evaluation scripts.
 shap
 scipy
+
+requests
