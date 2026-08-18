@@ -22,6 +22,7 @@ from fraud_stream import generate_simulated_fraud_events
 from network_stream import generate_simulated_network_events
 from mitre_attack import get_mitre_mapping
 from threat_intel import enrich_ip
+from entity_risk import update_entity_risk, get_entity_risk, get_top_risk_entities
 
 import dataset.scripts.clean_email as ce
 
@@ -181,6 +182,31 @@ def _upsert_alert(event_dict, score, level, is_anomaly, reasons, category,
     return result.inserted_id
 
 
+def _update_entity_risk_for_event(event_dict, score, is_anomaly):
+    """
+    Feeds this event's score into the running, time-decaying UEBA risk
+    for both the source IP and the user_id (if present) -- see
+    entity_risk.py for the decay/contribution model. Called from every
+    place an event gets scored (/detect, demo seeding, simulated
+    fraud/network streams) so the Top Risk Entities panel reflects all
+    traffic, not just live /detect calls.
+
+    Never raises -- risk scoring is a supplementary signal, not something
+    that should ever block event ingestion if it fails.
+    """
+    try:
+        ip = event_dict.get("ip")
+        if ip:
+            update_entity_risk(db, "ip", ip, score, event_dict.get("event_type"),
+                                timestamp=event_dict.get("timestamp"), is_anomaly=is_anomaly)
+        user_id = event_dict.get("user_id")
+        if user_id:
+            update_entity_risk(db, "user", user_id, score, event_dict.get("event_type"),
+                                timestamp=event_dict.get("timestamp"), is_anomaly=is_anomaly)
+    except Exception as e:
+        print(f"entity risk update skipped: {e}")
+
+
 def _compute_alert_priority(alert):
     """
     Combines three explainable signals into one priority score, used to
@@ -194,6 +220,11 @@ def _compute_alert_priority(alert):
         halving roughly every 12 hours) -- an alert active five minutes
         ago should usually outrank an equally severe one from three days
         ago that nobody has closed
+      - entity risk (capped at +15) -- the source IP's running, time-
+        decaying UEBA risk score (see entity_risk.py). This is what lets
+        an alert from a source with a documented history of bad behavior
+        outrank an equally-severe alert from a source seen for the first
+        time, even before this specific alert's own volume/recency catch up.
 
     Deliberately a transparent weighted formula, not a learned/black-box
     score -- consistent with the survey finding (Q20) that a lack of
@@ -212,7 +243,17 @@ def _compute_alert_priority(alert):
         hours_since = max((datetime.utcnow() - ts).total_seconds() / 3600.0, 0)
         recency_score = 30.0 * math.exp(-hours_since / 12.0)
 
-    return round(risk_score + volume_score + recency_score, 1)
+    entity_score = 0.0
+    ip = alert.get("ip")
+    if ip:
+        try:
+            entity = get_entity_risk(db, "ip", ip)
+            if entity.get("available"):
+                entity_score = min(entity["risk_score"] * 0.15, 15.0)
+        except Exception:
+            entity_score = 0.0
+
+    return round(risk_score + volume_score + recency_score + entity_score, 1)
 
 
 # =========================
@@ -325,6 +366,7 @@ def seed_demo_data():
             })
             _upsert_alert(event.dict(), score, level, is_anomaly, reasons, category,
                           mitre=mitre, threat_intel=intel)
+            _update_entity_risk_for_event(event.dict(), score, is_anomaly)
             inserted += 1
         except Exception as e:
             print(f"  skipped one demo event ({raw.get('event_type')}): {e}")
@@ -578,6 +620,7 @@ def detect(event: LogEvent):
         event.dict(), score, level, is_anomaly, reasons, category,
         mitre=mitre, threat_intel=intel,
     )
+    _update_entity_risk_for_event(event.dict(), score, is_anomaly)
 
     return {
         "anomaly": is_anomaly,
@@ -1046,6 +1089,27 @@ def user_behavior_hybrid_risk(user_id: str, recent_limit: int = 20):
 
 
 # =========================
+# ENTITY RISK (UEBA) — persistent, time-decaying risk per IP/user,
+# separate from any single event or alert. See entity_risk.py for the
+# decay/contribution model. Powers the Overview "Top Risk Entities" panel
+# and per-entity risk-timeline lookups.
+# =========================
+@app.get("/entity-risk/top")
+def entity_risk_top(entity_type: Optional[str] = None, limit: int = 10, min_score: float = 0.0):
+    if entity_type and entity_type not in ("ip", "user"):
+        raise HTTPException(status_code=400, detail="entity_type must be 'ip' or 'user'")
+    results = get_top_risk_entities(db, entity_type=entity_type, limit=limit, min_score=min_score)
+    return {"results": results, "count": len(results)}
+
+
+@app.get("/entity-risk/{entity_type}/{entity_id}")
+def entity_risk_detail(entity_type: str, entity_id: str):
+    if entity_type not in ("ip", "user"):
+        raise HTTPException(status_code=400, detail="entity_type must be 'ip' or 'user'")
+    return get_entity_risk(db, entity_type, entity_id)
+
+
+# =========================
 # ADMIN ACTIVITY TAB
 # =========================
 @app.get("/admin-activity")
@@ -1096,6 +1160,7 @@ def simulate_fraud_stream(count: int = 20):
     for e in events:
         logs_collection.insert_one(e)
         _upsert_alert(e, e["risk_score"], e["risk_level"], e["anomaly"], e["reason"], "fraud")
+        _update_entity_risk_for_event(e, e["risk_score"], e["anomaly"])
         inserted += 1
     return {
         "message": f"Inserted {inserted} simulated fraud events",
@@ -1119,6 +1184,7 @@ def simulate_network_stream(count: int = 20):
     for e in events:
         logs_collection.insert_one(e)
         _upsert_alert(e, e["risk_score"], e["risk_level"], e["anomaly"], e["reason"], "threat")
+        _update_entity_risk_for_event(e, e["risk_score"], e["anomaly"])
         inserted += 1
     return {
         "message": f"Inserted {inserted} simulated network intrusion events",
