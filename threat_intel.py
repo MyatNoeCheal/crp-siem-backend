@@ -67,12 +67,40 @@ _DEMO_BLOCKLIST = {
 }
 
 
+_RFC1918_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+]
+
+
 def _is_private(ip):
+    """
+    True ONLY for genuine internal-network addresses (RFC 1918 ranges,
+    loopback, link-local) -- deliberately narrower than Python's built-in
+    ipaddress.is_private, which ALSO classifies IANA documentation/test-net
+    ranges (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24) as private.
+
+    That distinction matters here: this project's demo/simulated data
+    uses exactly those documentation ranges (see main.py's _demo_events()
+    and fraud_stream.py/network_stream.py). If they were treated as
+    "private" they'd short-circuit straight to the internal-network
+    branch below and skip the reputation check entirely -- silently
+    hiding the demo blocklist match. Using the narrower RFC 1918-only
+    definition means documentation-range IPs still reach
+    _check_reputation() (so the demo blocklist match shows up), while
+    their GeoIP lookup still correctly fails (they're not real
+    geolocatable public addresses) -- both halves of the module
+    docstring's behavior now actually hold.
+    """
     try:
         addr = ipaddress.ip_address(ip)
-        return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
     except ValueError:
         return True  # unparseable -- treat as non-lookupable rather than erroring
+
+    if addr.is_loopback or addr.is_link_local:
+        return True
+    return any(addr in net for net in _RFC1918_NETWORKS)
 
 
 def _from_cache(ip):
