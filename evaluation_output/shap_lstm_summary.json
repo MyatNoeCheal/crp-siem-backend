@@ -3,14 +3,14 @@
   "explained_size": 40,
   "fast_method_aggregation": "max",
   "shap_feature_importance_pct": {
-    "is_large_attachment": 23.19,
-    "email_size_norm": 17.47,
-    "minutes_since_last_norm": 16.99,
-    "num_recipients_norm": 11.11,
-    "attachments_norm": 8.49,
-    "day_of_week": 8.12,
-    "is_external_recipient": 7.64,
-    "hour_of_day": 6.99
+    "is_large_attachment": 26.35,
+    "email_size_norm": 16.74,
+    "minutes_since_last_norm": 15.95,
+    "num_recipients_norm": 10.97,
+    "day_of_week": 8.1,
+    "attachments_norm": 8.0,
+    "is_external_recipient": 7.17,
+    "hour_of_day": 6.72
   },
   "fast_method_feature_importance_pct": {
     "hour_of_day": 5.01,
@@ -23,8 +23,8 @@
     "is_large_attachment": 0.28
   },
   "fast_vs_shap_correlation": {
-    "spearman_rho": -0.048,
-    "p_value": 0.9108,
+    "spearman_rho": -0.143,
+    "p_value": 0.7358,
     "n_features_compared": 8
   },
   "note": "SHAP explains reconstruction error via shap.GradientExplainer on the PyTorch LSTM Autoencoder. Averaged over sampled sequences and time steps to produce one importance value per named feature. Validates the live/fast reconstruction-error attribution used in lstm_inference.py's _feature_attribution() -- see fast_vs_shap_correlation for how closely their feature rankings agree."

@@ -147,18 +147,67 @@ def main():
     FAST_AGGREGATION = "max"
 
     lstm_inference._load()
+
+    # --- DIAGNOSTIC: sanity-check that _feature_attribution actually
+    # supports/honors aggregation="max" as currently defined in
+    # lstm_inference.py -- this catches the case where the docstring's
+    # claimed fix was never actually applied to the function body, or a
+    # stale .pyc/import is shadowing an older version. ---
+    import inspect
+    src = inspect.getsource(lstm_inference._feature_attribution)
+    print("\n--- _feature_attribution source check ---")
+    print(f"'aggregation == \"max\"' present in source: {'aggregation == \"max\"' in src}")
+    print(f"'.max(dim=1)' present in source: {'.max(dim=1)' in src}")
+    print("------------------------------------------\n")
+
+    # --- DIAGNOSTIC: raw (non-normalized, pre-percentage) per-feature
+    # squared-error magnitude, plus how often is_large_attachment is
+    # actually 1 in the explained sample -- tells us whether the signal
+    # exists in the scaled feature space at all before % normalization
+    # potentially washes it out. ---
+    is_large_idx = feature_names.index("is_large_attachment")
+    raw_max_sq_err = {f_name: [] for f_name in feature_names}
+    hot_count = 0
+
     fast_scores = {f_name: 0.0 for f_name in feature_names}
     with torch.no_grad():
         for i in range(len(X_explain)):
             x_i = X_explain[i:i + 1]
             recon_i = model(x_i)
+
+            sq_err = (x_i - recon_i) ** 2  # (1, T, F), SCALED feature space
+            per_feature_raw = sq_err.max(dim=1).values.squeeze(0).cpu().numpy()
+            for j, f_name in enumerate(feature_names):
+                raw_max_sq_err[f_name].append(float(per_feature_raw[j]))
+
+            # was this sequence's is_large_attachment ever "hot" (raw==1)
+            # at any timestep? Scaled values aren't 0/1 anymore, so check
+            # the unscaled sequence instead.
+            raw_seq = X[explain_idx[i]]  # unscaled (T, F)
+            if (raw_seq[:, is_large_idx] >= 1.0).any():
+                hot_count += 1
+
             attrs = lstm_inference._feature_attribution(
                 x_i, recon_i, top_n=len(feature_names), aggregation=FAST_AGGREGATION
             )
             for a in attrs:
                 fast_scores[a["feature"]] += a["contribution_pct"]
+
     total = sum(fast_scores.values()) or 1e-9
     fast_pct = {f_name: v / total * 100 for f_name, v in fast_scores.items()}
+
+    print("--- Raw max squared-error per feature (scaled space, mean over explained sample) ---")
+    for f_name in feature_names:
+        vals = raw_max_sq_err[f_name]
+        marker = "  <-- is_large_attachment" if f_name == "is_large_attachment" else ""
+        print(f"  {f_name:28s} mean={np.mean(vals):.5f}  max={np.max(vals):.5f}{marker}")
+    print(f"\n  is_large_attachment was 'hot' (>=1 at some timestep, raw/unscaled) "
+          f"in {hot_count}/{len(X_explain)} explained sequences.")
+    if hot_count == 0:
+        print("  ==> is_large_attachment never fires in this sample. Its low fast-method\n"
+              "      score is expected/correct here, not a bug -- re-run with a larger\n"
+              "      EXPLAIN_SIZE or a different random seed to get sequences where it's hot.")
+    print("------------------------------------------------------------------------------------\n")
 
     fast_vals = [fast_pct[f_name] for f_name in feature_names]
     shap_vals = [top_shap[f_name] for f_name in feature_names]
