@@ -6,7 +6,18 @@ from datetime import datetime, timedelta
 CATEGORY_RULES = {
     "fraud": {"payment", "transaction", "refund", "chargeback"},
     "admin_activity": {"admin_login", "config_change", "role_change", "user_delete"},
-    "user_behavior": {"login", "logout", "profile_update", "password_change"},
+    "user_behavior": {
+        "login", "logout", "profile_update", "password_change",
+        # --- e-commerce shopping-flow events (added after
+        # simulate_ecommerce_traffic.py surfaced these silently defaulting
+        # to "threat" -- see mitre_attack.py's _MITRE_MAP, which already
+        # explicitly treats these as benign, not attack techniques). These
+        # feed the User Behavior tab and the LSTM sequence model
+        # (lstm_inference.py) the same way login/logout do -- more
+        # behavioral events per user session means a better-informed
+        # sequence score, not a diluted one. ---
+        "browse", "add_to_cart", "checkout",
+    },
 }
 # Anything not matched above (e.g. failed_login, port_scan, ddos_attempt)
 # defaults to "threat" — see _infer_category().
@@ -30,6 +41,12 @@ CATEGORY_RULES = {
 #      almost certainly generating false positives on real purchases.
 #      Fixed below with a threshold computed from this store's own recent
 #      transaction distribution instead of an arbitrary round number.
+#
+# A THIRD source of false positives, found via simulate_ecommerce_traffic.py
+# during e-commerce integration testing: browse/add_to_cart/checkout had no
+# CATEGORY_RULES entry at all, so every normal shopping session's browsing
+# activity silently defaulted to category="threat" and flooded the Threats
+# tab with benign traffic. Fixed above by adding them to "user_behavior".
 
 FAILED_LOGIN_WINDOW_MINUTES = 10
 FAILED_LOGIN_THRESHOLD = 5
