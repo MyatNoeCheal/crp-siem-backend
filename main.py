@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from bson import ObjectId
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime, timedelta
 import os
 import json
@@ -23,6 +23,9 @@ from network_stream import generate_simulated_network_events
 from mitre_attack import get_mitre_mapping
 from threat_intel import enrich_ip
 from entity_risk import update_entity_risk, get_entity_risk, get_top_risk_entities
+import cases as cases_module
+import webhooks as webhooks_module
+import auth
 
 import dataset.scripts.clean_email as ce
 
@@ -82,6 +85,89 @@ ALERT_CORRELATION_WINDOW_MINUTES = 10
 class AlertStatusUpdate(BaseModel):
     status: str
     note: Optional[str] = None
+
+
+# =========================
+# ANALYST AUTHENTICATION + RBAC — see auth.py for the full design.
+# Login is stateless JWT; two roles ("analyst", "admin"). This REPLACES
+# the "no login flow exists" reasoning that previously left alert
+# triage / case management / webhook endpoints unprotected below --
+# every one of those now requires a valid analyst session, and a few
+# (webhook deletion, user management) additionally require "admin".
+# =========================
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserCreateRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "analyst"
+    display_name: Optional[str] = None
+
+
+class UserActiveUpdate(BaseModel):
+    active: bool
+
+
+# =========================
+# CASE MANAGEMENT — turns the alert queue into an actual investigation
+# workflow (see cases.py for the full design rationale). A case groups
+# one or more related alerts, carries an assignment + status of its own,
+# and keeps an append-only timeline of notes/status changes/links, the
+# way a real SOC separates "detection engine output" (alerts) from
+# "analyst investigation record" (cases).
+#
+# Same as /alerts/{id}/status above, these endpoints are deliberately
+# NOT behind require_api_key -- they're triggered by an analyst working
+# inside the dashboard itself, which has no login/key-entry flow. In a
+# production deployment these would sit behind real analyst
+# authentication instead.
+# =========================
+class CaseCreate(BaseModel):
+    title: str
+    alert_ids: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+
+
+class CaseUpdate(BaseModel):
+    title: Optional[str] = None
+    status: Optional[str] = None
+    assigned_to: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class CaseAlertLink(BaseModel):
+    alert_id: str
+
+
+class CaseNoteCreate(BaseModel):
+    content: str
+
+
+# =========================
+# WEBHOOK NOTIFICATIONS — external systems (Slack, a ticketing tool, a
+# custom listener) subscribe to SIEM events instead of polling the API.
+# See webhooks.py for the full design, event types, and the honest
+# single-attempt-delivery limitation. Same no-API-key rationale as the
+# alert/case endpoints above -- this is an analyst-configured integration
+# via the dashboard, not external ingestion traffic.
+# =========================
+class WebhookCreate(BaseModel):
+    url: str
+    events: List[str]
+    secret: Optional[str] = None
+    description: Optional[str] = None
+    active: bool = True
+
+
+class WebhookUpdate(BaseModel):
+    url: Optional[str] = None
+    events: Optional[List[str]] = None
+    secret: Optional[str] = None
+    description: Optional[str] = None
+    active: Optional[bool] = None
 
 
 def _upsert_alert(event_dict, score, level, is_anomaly, reasons, category,
@@ -179,6 +265,19 @@ def _upsert_alert(event_dict, score, level, is_anomaly, reasons, category,
         "threat_intel": threat_intel,
     }
     result = alerts_collection.insert_one(new_alert)
+
+    webhooks_module.deliver(db, "alert.created", {
+        "_id": str(result.inserted_id),
+        "ip": new_alert.get("ip"),
+        "user_id": new_alert.get("user_id"),
+        "event_type": new_alert.get("event_type"),
+        "category": new_alert.get("category"),
+        "risk_score": new_alert.get("risk_score"),
+        "risk_level": new_alert.get("risk_level"),
+        "reason": new_alert.get("reason"),
+        "first_seen": new_alert.get("first_seen"),
+    })
+
     return result.inserted_id
 
 
@@ -513,6 +612,69 @@ def health():
 
 
 # =========================
+# AUTH ENDPOINTS — see auth.py for the design rationale. These are the
+# only analyst-auth endpoints that don't themselves require a valid
+# token (login is how you get one; nothing else here is unauthenticated).
+# =========================
+@app.post("/auth/login")
+def login(payload: LoginRequest):
+    user = auth.authenticate_user(db, payload.username, payload.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    auth.touch_last_login(db, str(user["_id"]))
+    token = auth.create_access_token(str(user["_id"]), user["username"], user["role"])
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in_hours": auth.ACCESS_TOKEN_EXPIRE_HOURS,
+        "user": {
+            "username": user["username"],
+            "role": user["role"],
+            "display_name": user.get("display_name") or user["username"],
+        },
+    }
+
+
+@app.get("/auth/me")
+def get_me(user: dict = Depends(auth.get_current_user)):
+    return user
+
+
+# --- Admin-only: manage analyst accounts, from the dashboard's Settings
+# tab. There's no self-registration flow on purpose -- accounts are
+# provisioned by an admin (or via create_admin_user.py for the very
+# first one), the way a real SOC controls who gets console access. ---
+@app.post("/auth/users", dependencies=[Depends(auth.require_role("admin"))])
+def create_user_endpoint(payload: UserCreateRequest):
+    try:
+        user_id = auth.create_user(
+            db, payload.username, payload.password,
+            role=payload.role, display_name=payload.display_name,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"message": "User created", "user_id": user_id}
+
+
+@app.get("/auth/users", dependencies=[Depends(auth.require_role("admin"))])
+def list_users_endpoint():
+    return {"results": auth.list_users(db)}
+
+
+@app.patch("/auth/users/{user_id}/active", dependencies=[Depends(auth.require_role("admin"))])
+def set_user_active_endpoint(user_id: str, payload: UserActiveUpdate):
+    try:
+        found = auth.set_user_active(db, user_id, payload.active)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user_id")
+    if not found:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"message": "Updated", "active": payload.active}
+
+
+# =========================
 # CERT DATA INGESTION
 # =========================
 @app.post("/ingest-cert", dependencies=[Depends(require_api_key)])
@@ -545,7 +707,7 @@ def create_log(log: LogData):
 # =========================
 # GET LOGS (paginated + filterable) -> powers the "Logs" tab
 # =========================
-@app.get("/logs")
+@app.get("/logs", dependencies=[Depends(auth.get_current_user)])
 def get_logs_api(
     page: int = 1,
     page_size: int = 25,
@@ -638,15 +800,16 @@ def detect(event: LogEvent):
 # ALERT TRIAGE — update an alert's status (New / Investigating / Resolved
 # / False Positive). Called directly by the dashboard's Threats tab.
 #
-# Deliberately NOT behind require_api_key: /detect and /logs POST are
-# protected because they accept external ingestion traffic (e.g. a
-# simulated e-commerce site), but this endpoint is triggered by an
-# analyst clicking a dropdown in the dashboard itself, which has no
-# login/key-entry flow to attach an X-API-Key header. In a production
-# deployment this would sit behind real analyst authentication instead.
+# Behind auth.get_current_user (not require_api_key): /detect and /logs
+# POST use X-API-Key because they accept external ingestion traffic (e.g.
+# a simulated e-commerce site); this endpoint is a human analyst action
+# from inside the dashboard, so it uses the analyst JWT session instead
+# (see auth.py). Any authenticated analyst or admin may triage alerts --
+# this isn't admin-gated, since triage is core day-to-day SOC work.
 # =========================
 @app.patch("/alerts/{alert_id}/status")
-def update_alert_status(alert_id: str, update: AlertStatusUpdate):
+def update_alert_status(alert_id: str, update: AlertStatusUpdate,
+                         user: dict = Depends(auth.get_current_user)):
     if update.status not in ALERT_STATUSES:
         raise HTTPException(
             status_code=400,
@@ -656,6 +819,11 @@ def update_alert_status(alert_id: str, update: AlertStatusUpdate):
         obj_id = ObjectId(alert_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid alert_id")
+
+    previous_alert = alerts_collection.find_one({"_id": obj_id})
+    if previous_alert is None:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    previous_status = previous_alert.get("status")
 
     result = alerts_collection.update_one(
         {"_id": obj_id},
@@ -671,13 +839,207 @@ def update_alert_status(alert_id: str, update: AlertStatusUpdate):
 
     alert = alerts_collection.find_one({"_id": obj_id})
     alert["_id"] = str(alert["_id"])
+
+    webhooks_module.deliver(db, "alert.status_changed", {
+        "_id": alert["_id"],
+        "ip": alert.get("ip"),
+        "event_type": alert.get("event_type"),
+        "risk_level": alert.get("risk_level"),
+        "previous_status": previous_status,
+        "status": update.status,
+        "note": update.note,
+        "changed_by": user["username"],
+    })
+
     return {"message": "Status updated", "alert": alert}
+
+
+# =========================
+# CASE MANAGEMENT ENDPOINTS — all behind auth.get_current_user (any
+# authenticated analyst or admin; case work isn't admin-gated). The
+# real logged-in username is now threaded through as `author` on every
+# write, replacing the previous hardcoded author="analyst" default in
+# cases.py -- so the investigation timeline actually records WHO did
+# what, which is the entire point of an audit trail.
+# =========================
+@app.post("/cases")
+def create_case_endpoint(payload: CaseCreate, user: dict = Depends(auth.get_current_user)):
+    try:
+        case = cases_module.create_case(
+            db, payload.title, alert_ids=payload.alert_ids, tags=payload.tags,
+            author=user["username"],
+        )
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid alert_id in alert_ids")
+    return case
+
+
+@app.get("/cases")
+def list_cases_endpoint(status: Optional[str] = None, assigned_to: Optional[str] = None, limit: int = 100,
+                         user: dict = Depends(auth.get_current_user)):
+    if status and status not in cases_module.CASE_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of {sorted(cases_module.CASE_STATUSES)}",
+        )
+    results = cases_module.list_cases(db, status=status, assigned_to=assigned_to, limit=limit)
+    return {"results": results, "count": len(results)}
+
+
+@app.get("/cases/{case_id}")
+def get_case_endpoint(case_id: str, user: dict = Depends(auth.get_current_user)):
+    try:
+        case = cases_module.get_case(db, case_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid case_id")
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
+
+
+@app.patch("/cases/{case_id}")
+def update_case_endpoint(case_id: str, payload: CaseUpdate, user: dict = Depends(auth.get_current_user)):
+    if payload.status and payload.status not in cases_module.CASE_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"status must be one of {sorted(cases_module.CASE_STATUSES)}",
+        )
+    try:
+        case = cases_module.update_case(db, case_id, payload.dict(exclude_unset=True), author=user["username"])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid case_id")
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
+
+
+@app.post("/cases/{case_id}/link-alert")
+def link_alert_endpoint(case_id: str, payload: CaseAlertLink, user: dict = Depends(auth.get_current_user)):
+    try:
+        result = cases_module.link_alert(db, case_id, payload.alert_id, author=user["username"])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid case_id or alert_id")
+    if not result:
+        raise HTTPException(status_code=404, detail="Case or alert not found")
+    return result
+
+
+@app.post("/cases/{case_id}/unlink-alert")
+def unlink_alert_endpoint(case_id: str, payload: CaseAlertLink, user: dict = Depends(auth.get_current_user)):
+    try:
+        result = cases_module.unlink_alert(db, case_id, payload.alert_id, author=user["username"])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid case_id or alert_id")
+    if not result:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return result
+
+
+@app.post("/cases/{case_id}/notes")
+def add_case_note_endpoint(case_id: str, payload: CaseNoteCreate, user: dict = Depends(auth.get_current_user)):
+    if not payload.content.strip():
+        raise HTTPException(status_code=400, detail="Note content cannot be empty")
+    try:
+        result = cases_module.add_note(db, case_id, payload.content.strip(), author=user["username"])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid case_id")
+    if not result:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return result
+
+
+@app.get("/cases/{case_id}/suggested-alerts")
+def suggested_alerts_endpoint(case_id: str, limit: int = 10, user: dict = Depends(auth.get_current_user)):
+    try:
+        results = cases_module.suggest_related_alerts(db, case_id, limit=limit)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid case_id")
+    return {"results": results, "count": len(results)}
+
+
+# =========================
+# WEBHOOK MANAGEMENT ENDPOINTS — create/view/test open to any
+# authenticated analyst (configuring your own team's Slack notification
+# is routine setup work); DELETE is admin-only, since removing an
+# integration everyone relies on shouldn't be a single analyst's call.
+# =========================
+@app.post("/webhooks", dependencies=[Depends(auth.get_current_user)])
+def create_webhook_endpoint(payload: WebhookCreate):
+    try:
+        wh = webhooks_module.register_webhook(
+            db, payload.url, payload.events, secret=payload.secret,
+            description=payload.description, active=payload.active,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return wh
+
+
+@app.get("/webhooks", dependencies=[Depends(auth.get_current_user)])
+def list_webhooks_endpoint(active_only: bool = False):
+    results = webhooks_module.list_webhooks(db, active_only=active_only)
+    return {"results": results, "count": len(results), "available_events": sorted(webhooks_module.VALID_EVENTS)}
+
+
+@app.get("/webhooks/{webhook_id}", dependencies=[Depends(auth.get_current_user)])
+def get_webhook_endpoint(webhook_id: str):
+    try:
+        wh = webhooks_module.get_webhook(db, webhook_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid webhook_id")
+    if not wh:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    return wh
+
+
+@app.patch("/webhooks/{webhook_id}", dependencies=[Depends(auth.get_current_user)])
+def update_webhook_endpoint(webhook_id: str, payload: WebhookUpdate):
+    try:
+        wh = webhooks_module.update_webhook(db, webhook_id, payload.dict(exclude_unset=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid webhook_id")
+    if not wh:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    return wh
+
+
+@app.delete("/webhooks/{webhook_id}", dependencies=[Depends(auth.require_role("admin"))])
+def delete_webhook_endpoint(webhook_id: str):
+    try:
+        deleted = webhooks_module.delete_webhook(db, webhook_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid webhook_id")
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    return {"message": "Webhook deleted"}
+
+
+@app.post("/webhooks/{webhook_id}/test", dependencies=[Depends(auth.get_current_user)])
+def test_webhook_endpoint(webhook_id: str):
+    try:
+        result = webhooks_module.test_webhook(db, webhook_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid webhook_id")
+    if result is None:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    return result
+
+
+@app.get("/webhooks/{webhook_id}/deliveries", dependencies=[Depends(auth.get_current_user)])
+def webhook_deliveries_endpoint(webhook_id: str, limit: int = 20):
+    try:
+        results = webhooks_module.get_deliveries(db, webhook_id, limit=limit)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid webhook_id")
+    return {"results": results, "count": len(results)}
 
 
 # =========================
 # OVERVIEW TAB
 # =========================
-@app.get("/overview")
+@app.get("/overview", dependencies=[Depends(auth.get_current_user)])
 def overview():
 
     total = logs_collection.count_documents({})
@@ -713,7 +1075,7 @@ def _parse_ts(value):
 # =========================
 # OVERVIEW: EVENTS-OVER-TIME TREND (for the Overview trend chart)
 # =========================
-@app.get("/overview/timeline")
+@app.get("/overview/timeline", dependencies=[Depends(auth.get_current_user)])
 def overview_timeline(hours: int = 24, buckets: int = 24, scan_limit: int = 3000):
     """
     Buckets recent events into evenly-sized time windows so the Overview
@@ -758,7 +1120,7 @@ def overview_timeline(hours: int = 24, buckets: int = 24, scan_limit: int = 3000
 # =========================
 # OVERVIEW: TOP OFFENDING IPs / RISKIEST USERS
 # =========================
-@app.get("/overview/top-entities")
+@app.get("/overview/top-entities", dependencies=[Depends(auth.get_current_user)])
 def overview_top_entities(scan_limit: int = 500, top_n: int = 5):
     """
     Surfaces the "top offenders" panel a SOC analyst checks first: which
@@ -795,7 +1157,7 @@ def overview_top_entities(scan_limit: int = 500, top_n: int = 5):
 # =========================
 # OVERVIEW: THREAT MAP — geolocated points for offending external IPs
 # =========================
-@app.get("/overview/threat-map")
+@app.get("/overview/threat-map", dependencies=[Depends(auth.get_current_user)])
 def overview_threat_map(scan_limit: int = 300, top_n: int = 15):
     """
     Geolocated points for the top offending external IPs -- powers a
@@ -896,7 +1258,7 @@ def _correlate_incidents(events, window_minutes=10):
     return incidents
 
 
-@app.get("/threats")
+@app.get("/threats", dependencies=[Depends(auth.get_current_user)])
 def threats(limit: int = 100, anomaly_only: bool = True, group_incidents: bool = True,
             correlation_window_minutes: int = 10, scan_limit: int = 500,
             status: Optional[str] = None, sort: str = "priority"):
@@ -957,7 +1319,7 @@ def threats(limit: int = 100, anomaly_only: bool = True, group_incidents: bool =
 # =========================
 # FRAUD TAB
 # =========================
-@app.get("/fraud")
+@app.get("/fraud", dependencies=[Depends(auth.get_current_user)])
 def fraud(limit: int = 100, min_amount: Optional[float] = None):
     query = {"category": "fraud"}
     if min_amount is not None:
@@ -981,7 +1343,7 @@ def fraud(limit: int = 100, min_amount: Optional[float] = None):
 # =========================
 # USER BEHAVIOR TAB
 # =========================
-@app.get("/user-behavior")
+@app.get("/user-behavior", dependencies=[Depends(auth.get_current_user)])
 def user_behavior(limit: int = 100, user_id: Optional[str] = None):
     query = {"category": "user_behavior"}
     if user_id:
@@ -1002,7 +1364,7 @@ def user_behavior(limit: int = 100, user_id: Optional[str] = None):
 # the rule-based /user-behavior results above with a reconstruction-error
 # based score computed over that user's recent event sequence.
 # =========================
-@app.get("/user-behavior/{user_id}/lstm-risk")
+@app.get("/user-behavior/{user_id}/lstm-risk", dependencies=[Depends(auth.get_current_user)])
 def user_behavior_lstm_risk(user_id: str):
     events = list(
         logs_collection.find({"user_id": user_id}).sort("timestamp", 1).limit(15)
@@ -1026,7 +1388,7 @@ def user_behavior_lstm_risk(user_id: str):
 # than a real hybrid signal -- so it stays evaluated offline instead,
 # with real metrics in metrics_summary.json.
 # =========================
-@app.get("/user-behavior/{user_id}/hybrid-risk")
+@app.get("/user-behavior/{user_id}/hybrid-risk", dependencies=[Depends(auth.get_current_user)])
 def user_behavior_hybrid_risk(user_id: str, recent_limit: int = 20):
     recent_events = list(
         logs_collection.find({"user_id": user_id}).sort("_id", -1).limit(recent_limit)
@@ -1094,7 +1456,7 @@ def user_behavior_hybrid_risk(user_id: str, recent_limit: int = 20):
 # decay/contribution model. Powers the Overview "Top Risk Entities" panel
 # and per-entity risk-timeline lookups.
 # =========================
-@app.get("/entity-risk/top")
+@app.get("/entity-risk/top", dependencies=[Depends(auth.get_current_user)])
 def entity_risk_top(entity_type: Optional[str] = None, limit: int = 10, min_score: float = 0.0):
     if entity_type and entity_type not in ("ip", "user"):
         raise HTTPException(status_code=400, detail="entity_type must be 'ip' or 'user'")
@@ -1102,7 +1464,7 @@ def entity_risk_top(entity_type: Optional[str] = None, limit: int = 10, min_scor
     return {"results": results, "count": len(results)}
 
 
-@app.get("/entity-risk/{entity_type}/{entity_id}")
+@app.get("/entity-risk/{entity_type}/{entity_id}", dependencies=[Depends(auth.get_current_user)])
 def entity_risk_detail(entity_type: str, entity_id: str):
     if entity_type not in ("ip", "user"):
         raise HTTPException(status_code=400, detail="entity_type must be 'ip' or 'user'")
@@ -1112,7 +1474,7 @@ def entity_risk_detail(entity_type: str, entity_id: str):
 # =========================
 # ADMIN ACTIVITY TAB
 # =========================
-@app.get("/admin-activity")
+@app.get("/admin-activity", dependencies=[Depends(auth.get_current_user)])
 def admin_activity(limit: int = 100):
     cursor = logs_collection.find({"category": "admin_activity"}).sort("_id", -1).limit(limit)
     results = []
@@ -1126,7 +1488,7 @@ def admin_activity(limit: int = 100):
 # =========================
 # AI INSIGHTS TAB — free, rule-based analysis (see ai_insights.py)
 # =========================
-@app.get("/ai-insights")
+@app.get("/ai-insights", dependencies=[Depends(auth.get_current_user)])
 def ai_insights(limit: int = 50):
     recent_events = list(
         logs_collection.find().sort("_id", -1).limit(limit)
@@ -1140,7 +1502,7 @@ def ai_insights(limit: int = 50):
 # =========================
 # STATS (kept for backward compatibility with existing prototype)
 # =========================
-@app.get("/stats")
+@app.get("/stats", dependencies=[Depends(auth.get_current_user)])
 def stats():
 
     total = logs_collection.count_documents({})

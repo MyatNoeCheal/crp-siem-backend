@@ -592,6 +592,55 @@
   .placeholder-panel .p-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
   .placeholder-panel .p-sub { font-size: 12.5px; max-width: 420px; margin: 0 auto; line-height: 1.6; }
 
+  /* ===== Login overlay ===== */
+  .login-overlay {
+    position: fixed; inset: 0; z-index: 200;
+    background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .login-card {
+    width: 100%; max-width: 340px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 26px;
+  }
+  .login-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .login-logo .logo-badge { width: 36px; height: 36px; border-radius: 50%; background: radial-gradient(circle at 32% 28%, #1E2A5E, #0B1330); display:flex; align-items:center; justify-content:center; box-shadow: 0 0 0 1px rgba(91,127,255,0.35); }
+  .login-logo .logo-badge svg { width: 78%; height: 78%; }
+  .login-title { font-weight: 800; font-size: 15px; letter-spacing: 0.02em; }
+  .login-sub { color: var(--text-muted); font-size: 12px; margin: 4px 0 20px; }
+  .login-field { margin-bottom: 12px; }
+  .login-field label { display:block; font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; font-family: var(--font-mono); }
+  .login-field input {
+    width: 100%; background: var(--input-bg); border: 1px solid var(--border);
+    color: var(--text); padding: 9px 12px; border-radius: 8px; font-family: var(--font-sans); font-size: 13px;
+  }
+  .login-field input:focus { outline: none; border-color: var(--blue); }
+  .login-error { color: var(--red); font-size: 12px; margin-bottom: 12px; min-height: 1.2em; }
+  .login-submit {
+    width: 100%; background: var(--blue); color: #fff; border: none; border-radius: 8px;
+    padding: 10px; font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+    letter-spacing: 0.04em; cursor: pointer;
+  }
+  .login-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+  .login-submit:hover:not(:disabled) { filter: brightness(1.1); }
+  .login-hint { margin-top: 14px; font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+
+  .topbar-user { display: flex; align-items: center; gap: 8px; }
+  .topbar-user .u-name { font-size: 12px; color: var(--text); font-weight: 600; }
+  .topbar-user .u-role {
+    font-family: var(--font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 2px 6px; border-radius: 999px; background: var(--blue-dim); color: var(--blue);
+  }
+  .logout-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+    border-radius: 8px; padding: 6px 10px; font-family: var(--font-mono); font-size: 10.5px; cursor: pointer;
+  }
+  .logout-btn:hover { border-color: var(--red); color: var(--red); }
+  body:not(.role-admin) .admin-only { display: none !important; }
+
   /* ===== Mobile ===== */
   .mobile-nav-toggle {
     display: none;
@@ -645,6 +694,36 @@
 </head>
 <body>
 
+<!-- ===== Login overlay — shown until a valid session token is present ===== -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-badge"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+        <path d="M32 3 L56 11 V29 C56 47 45 58 32 61 C19 58 8 47 8 29 V11 Z" fill="#0B1330" stroke="#6C87FF" stroke-width="2"/>
+        <path d="M32 16 C24 16 20 22 21 27 C19 29 19 34 22 36 C21 39 23 43 27 43 C28 46 32 47 32 44 Z" fill="none" stroke="#8FA8FF" stroke-width="2" stroke-linejoin="round"/>
+        <path d="M32 44 L32 16" stroke="#8FA8FF" stroke-width="2"/>
+      </svg></div>
+      <div>
+        <div class="login-title">SMART SIEM</div>
+      </div>
+    </div>
+    <div class="login-sub">Analyst sign-in — E-Commerce Threat Console</div>
+    <form id="loginForm" onsubmit="return handleLoginSubmit(event)">
+      <div class="login-field">
+        <label for="loginUsername">Username</label>
+        <input type="text" id="loginUsername" autocomplete="username" required>
+      </div>
+      <div class="login-field">
+        <label for="loginPassword">Password</label>
+        <input type="password" id="loginPassword" autocomplete="current-password" required>
+      </div>
+      <div class="login-error" id="loginError"></div>
+      <button type="submit" class="login-submit" id="loginSubmitBtn">SIGN IN</button>
+    </form>
+    <div class="login-hint">No account yet? Ask an admin to create one from Settings → Admin Users, or run <code class="inline">create_admin_user.py</code> once to bootstrap the first admin.</div>
+  </div>
+</div>
+
 <div class="app-shell">
 
   <!-- ===== Top bar ===== -->
@@ -690,6 +769,11 @@
       <div class="topbar-clock">
         <div class="clock-label">System Time</div>
         <div class="clock-value" id="clockValue">—</div>
+      </div>
+      <div class="topbar-user" id="topbarUser" style="display:none;">
+        <span class="u-name" id="topbarUserName">—</span>
+        <span class="u-role" id="topbarUserRole">—</span>
+        <button class="logout-btn" onclick="logout()">Sign out</button>
       </div>
       <div class="topbar-avatar"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
 <defs>
@@ -1045,20 +1129,79 @@
         </div>
       </div>
 
-      <!-- SETTINGS (placeholder) -->
+      <!-- SETTINGS -->
       <div class="tab-content" id="tab-settings">
         <div class="page-header">
           <div>
             <div class="page-title">Settings</div>
-            <div class="page-sub">Console preferences</div>
+            <div class="page-sub">Console preferences &amp; integrations</div>
           </div>
         </div>
+
         <div class="panel">
-          <div class="placeholder-panel">
-            <div class="p-icon">⚚</div>
-            <div class="p-title">Nothing to configure yet</div>
-            <div class="p-sub">There's no user-account or preferences system behind this dashboard — it's a single-operator SOC console. The theme toggle (top right) is the one setting that's real, and it's saved to this browser automatically.</div>
+          <div class="placeholder-panel" style="padding:24px 20px;">
+            <div class="p-sub" style="max-width:none; text-align:left;">Signed-in analysts can triage alerts, work cases, and configure webhooks. The theme toggle (top right) is the one display setting, saved to this browser automatically. Webhook deletion and account management below are restricted to admins.</div>
           </div>
+        </div>
+
+        <div class="panel admin-only" id="adminUsersPanel">
+          <div class="panel-title">
+            Admin Users
+            <span class="panel-title-link" onclick="showNewUserForm()">+ New Account</span>
+          </div>
+          <p class="lstm-hint" style="margin-bottom:14px;">Create and manage analyst/admin accounts for this console. Visible to admins only.</p>
+          <div id="newUserFormWrap" style="display:none; margin-bottom:16px; padding:14px; background:var(--input-bg); border:1px solid var(--border); border-radius:10px;">
+            <div class="filter-row"><input type="text" id="newUserUsername" placeholder="Username" style="width:100%;"></div>
+            <div class="filter-row"><input type="password" id="newUserPassword" placeholder="Password (min 8 chars)" style="width:100%;"></div>
+            <div class="filter-row"><input type="text" id="newUserDisplayName" placeholder="Display name (optional)" style="width:100%;"></div>
+            <div class="filter-row">
+              <label class="filter-checkbox">Role:
+                <select id="newUserRole">
+                  <option value="analyst">Analyst</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+            </div>
+            <button class="refresh-btn" onclick="submitNewUser()">Create</button>
+            <button class="refresh-btn" onclick="hideNewUserForm()">Cancel</button>
+          </div>
+          <table>
+            <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Last Login</th><th></th></tr></thead>
+            <tbody id="adminUsersBody"><tr class="loading-row"><td colspan="5">Loading…</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="panel" id="webhooksListPanel">
+          <div class="panel-title">
+            Webhook Notifications
+            <span class="panel-title-link" onclick="showNewWebhookForm()">+ New Webhook</span>
+          </div>
+          <p class="lstm-hint" style="margin-bottom:14px;">
+            Sends a POST request to an external URL whenever a subscribed event happens — a new alert, an alert's status changing, a case being created, a case's status changing, or an investigation note being added. If a secret is set, each payload is HMAC-SHA256 signed via the <code class="inline">X-SIEM-Signature</code> header so the receiver can verify it's genuine.
+          </p>
+          <div id="newWebhookFormWrap" style="display:none; margin-bottom:16px; padding:14px; background:var(--input-bg); border:1px solid var(--border); border-radius:10px;">
+            <div class="filter-row"><input type="text" id="newWebhookUrl" placeholder="https://your-endpoint.example.com/siem-events" style="width:100%;"></div>
+            <div class="filter-row"><input type="text" id="newWebhookSecret" placeholder="Signing secret (optional)" style="width:100%;"></div>
+            <div class="filter-row"><input type="text" id="newWebhookDescription" placeholder="Description (optional, e.g. 'Slack #soc-alerts')" style="width:100%;"></div>
+            <div id="newWebhookEventsWrap" class="filter-row" style="flex-wrap:wrap;"></div>
+            <button class="refresh-btn" onclick="submitNewWebhook()">Create</button>
+            <button class="refresh-btn" onclick="hideNewWebhookForm()">Cancel</button>
+          </div>
+          <table>
+            <thead><tr><th>URL</th><th>Events</th><th>Status</th><th>Signed</th><th></th></tr></thead>
+            <tbody id="webhooksBody"><tr class="loading-row"><td colspan="5">Loading…</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="panel" id="webhookDeliveriesPanel" style="display:none;">
+          <div class="panel-title">
+            Recent Deliveries <span class="lstm-user-tag" id="webhookDeliveriesUrlTag"></span>
+            <span class="panel-title-link" onclick="closeWebhookDeliveries()">← Back</span>
+          </div>
+          <table>
+            <thead><tr><th>Sent</th><th>Event</th><th>Result</th><th>Detail</th></tr></thead>
+            <tbody id="webhookDeliveriesBody"><tr class="loading-row"><td colspan="4">Loading…</td></tr></tbody>
+          </table>
         </div>
       </div>
 
@@ -1079,6 +1222,85 @@ let liveFeedTimer = null;
 let logsState = { page: 1, page_size: 25, total_pages: 1 };
 let logsDebounceTimer = null;
 let activeTab = 'overview';
+
+// ===== Auth state — JWT session (see auth.py). Token + user info persist
+// in localStorage (same pattern already used here for the theme
+// preference) so a page refresh doesn't force a re-login. =====
+let authToken = localStorage.getItem('siem-auth-token') || null;
+let currentUser = null;
+try {
+  const savedUser = localStorage.getItem('siem-auth-user');
+  if (savedUser) currentUser = JSON.parse(savedUser);
+} catch (e) { currentUser = null; }
+
+function applyAuthUI() {
+  const loggedIn = !!authToken && !!currentUser;
+  document.getElementById('loginOverlay').style.display = loggedIn ? 'none' : 'flex';
+  document.getElementById('topbarUser').style.display = loggedIn ? 'flex' : 'none';
+  document.body.classList.toggle('role-admin', loggedIn && currentUser.role === 'admin');
+  if (loggedIn) {
+    document.getElementById('topbarUserName').textContent = currentUser.display_name || currentUser.username;
+    document.getElementById('topbarUserRole').textContent = currentUser.role;
+  }
+}
+
+async function handleLoginSubmit(evt) {
+  evt.preventDefault();
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  const btn = document.getElementById('loginSubmitBtn');
+  errEl.textContent = '';
+  btn.disabled = true;
+  btn.textContent = 'SIGNING IN…';
+  try {
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || 'Invalid username or password');
+    }
+    const data = await res.json();
+    authToken = data.access_token;
+    currentUser = data.user;
+    localStorage.setItem('siem-auth-token', authToken);
+    localStorage.setItem('siem-auth-user', JSON.stringify(currentUser));
+    applyAuthUI();
+    document.getElementById('loginPassword').value = '';
+    loadOverview();
+    loadAdminUsersIfAdmin();
+  } catch (e) {
+    errEl.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'SIGN IN';
+  }
+  return false;
+}
+
+function logout() {
+  authToken = null;
+  currentUser = null;
+  localStorage.removeItem('siem-auth-token');
+  localStorage.removeItem('siem-auth-user');
+  applyAuthUI();
+}
+
+// Wraps fetch with the Authorization header attached whenever we have a
+// token -- used for every write (POST/PATCH/DELETE) against alerts,
+// cases, and webhooks. A 401 means the session expired or was revoked;
+// drop back to the login screen rather than showing a confusing error.
+async function authFetch(url, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 401) {
+    logout();
+  }
+  return res;
+}
 
 const SEVERITY_COLORS = { critical: 'var(--critical)', high: 'var(--high)', medium: 'var(--medium)', low: 'var(--low)' };
 const SEVERITY_HEX = { critical: '#F0465B', high: '#F5A623', medium: '#F2C94C', low: '#34D399' };
@@ -1112,7 +1334,8 @@ function loadTabData(tab) {
     case 'admin-activity': loadAdminActivity(); break;
     case 'ai-insights': loadAiInsights(); break;
     case 'logs': loadLogs(); break;
-    default: break; // reports / settings are static
+    case 'settings': loadWebhooks(); loadAdminUsersIfAdmin(); break;
+    default: break; // reports is static
   }
 }
 
@@ -1176,7 +1399,7 @@ async function checkStatus() {
 }
 
 async function apiGet(path) {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await authFetch(`${API_BASE}${path}`);
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
   return res.json();
 }
@@ -1644,7 +1867,7 @@ async function createCaseFromAlert(alertId) {
   const title = prompt('Case title:');
   if (!title || !title.trim()) return;
   try {
-    const res = await fetch(`${API_BASE}/cases`, {
+    const res = await authFetch(`${API_BASE}/cases`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: title.trim(), alert_ids: [alertId] }),
     });
@@ -1660,7 +1883,7 @@ function statusLabel(s) {
 }
 async function updateAlertStatus(alertId, newStatus) {
   try {
-    const res = await fetch(`${API_BASE}/alerts/${alertId}/status`, {
+    const res = await authFetch(`${API_BASE}/alerts/${alertId}/status`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: newStatus }),
     });
     if (!res.ok) throw new Error(`Request failed: ${res.status}`);
@@ -1719,7 +1942,7 @@ async function submitNewCase() {
   const tagsRaw = document.getElementById('newCaseTags').value.trim();
   const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
   try {
-    const res = await fetch(`${API_BASE}/cases`, {
+    const res = await authFetch(`${API_BASE}/cases`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title, tags }),
     });
@@ -1833,7 +2056,7 @@ async function renderCaseDetail() {
 
 async function updateCaseField(field, value) {
   try {
-    const res = await fetch(`${API_BASE}/cases/${casesState.currentCaseId}`, {
+    const res = await authFetch(`${API_BASE}/cases/${casesState.currentCaseId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [field]: value }),
     });
@@ -1847,7 +2070,7 @@ async function updateCaseField(field, value) {
 
 async function linkAlertToCase(alertId) {
   try {
-    const res = await fetch(`${API_BASE}/cases/${casesState.currentCaseId}/link-alert`, {
+    const res = await authFetch(`${API_BASE}/cases/${casesState.currentCaseId}/link-alert`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ alert_id: alertId }),
     });
@@ -1860,7 +2083,7 @@ async function linkAlertToCase(alertId) {
 
 async function unlinkAlertFromCase(alertId) {
   try {
-    const res = await fetch(`${API_BASE}/cases/${casesState.currentCaseId}/unlink-alert`, {
+    const res = await authFetch(`${API_BASE}/cases/${casesState.currentCaseId}/unlink-alert`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ alert_id: alertId }),
     });
@@ -1876,7 +2099,7 @@ async function submitCaseNote() {
   const content = input.value.trim();
   if (!content) return;
   try {
-    const res = await fetch(`${API_BASE}/cases/${casesState.currentCaseId}/notes`, {
+    const res = await authFetch(`${API_BASE}/cases/${casesState.currentCaseId}/notes`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),
     });
@@ -2060,6 +2283,225 @@ function changeLogsPage(delta) {
   loadLogs();
 }
 
+// ===== Webhooks =====
+const WEBHOOK_EVENT_LABELS = {
+  'alert.created': 'Alert created',
+  'alert.status_changed': 'Alert status changed',
+  'case.created': 'Case created',
+  'case.status_changed': 'Case status changed',
+  'case.note_added': 'Case note added',
+};
+let webhooksState = { availableEvents: Object.keys(WEBHOOK_EVENT_LABELS) };
+
+function eventCheckboxesHtml(idPrefix, checkedEvents) {
+  checkedEvents = checkedEvents || [];
+  return webhooksState.availableEvents.map(ev => `
+    <label class="filter-checkbox" style="margin-right:4px;">
+      <input type="checkbox" id="${idPrefix}_${ev}" value="${ev}" ${checkedEvents.includes(ev) ? 'checked' : ''}>
+      ${WEBHOOK_EVENT_LABELS[ev] || ev}
+    </label>`).join('');
+}
+function readCheckedEvents(idPrefix) {
+  return webhooksState.availableEvents.filter(ev => document.getElementById(`${idPrefix}_${ev}`)?.checked);
+}
+
+async function loadWebhooks() {
+  const tbody = document.getElementById('webhooksBody');
+  tbody.innerHTML = '<tr class="loading-row"><td colspan="5">Loading…</td></tr>';
+  try {
+    const data = await apiGet('/webhooks');
+    webhooksState.availableEvents = data.available_events && data.available_events.length ? data.available_events : webhooksState.availableEvents;
+    document.getElementById('newWebhookEventsWrap').innerHTML = eventCheckboxesHtml('newWh', []);
+    const results = data.results || [];
+    if (!results.length) {
+      tbody.innerHTML = emptyRow(5, 'No webhooks configured', 'Add one above to get notified when alerts or cases change.');
+      return;
+    }
+    tbody.innerHTML = results.map(w => `
+      <tr>
+        <td style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${w.url}">${w.description ? `<div>${w.description}</div>` : ''}<code class="inline">${w.url}</code></td>
+        <td style="color:var(--text-muted); font-size:11.5px;">${(w.events || []).map(e => WEBHOOK_EVENT_LABELS[e] || e).join(', ')}</td>
+        <td>${w.active ? '<span class="badge low">active</span>' : '<span class="badge medium">paused</span>'}</td>
+        <td>${w.has_secret ? '<span class="badge low">yes</span>' : '<span class="lstm-hint">no</span>'}</td>
+        <td style="white-space:nowrap;">
+          <button class="refresh-btn" style="padding:3px 8px; font-size:9px;" onclick="toggleWebhookActive('${w._id}', ${!w.active})">${w.active ? 'Pause' : 'Resume'}</button>
+          <button class="refresh-btn" style="padding:3px 8px; font-size:9px;" onclick="testWebhook('${w._id}')">Test</button>
+          <button class="refresh-btn" style="padding:3px 8px; font-size:9px;" onclick="viewWebhookDeliveries('${w._id}', '${w.url.replace(/'/g, "\\'")}')">Deliveries</button>
+          <button class="refresh-btn" style="padding:3px 8px; font-size:9px;" onclick="deleteWebhook('${w._id}')">Delete</button>
+        </td>
+      </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = errorRow(5, e.message);
+  }
+}
+
+function showNewWebhookForm() { document.getElementById('newWebhookFormWrap').style.display = 'block'; }
+function hideNewWebhookForm() {
+  document.getElementById('newWebhookFormWrap').style.display = 'none';
+  document.getElementById('newWebhookUrl').value = '';
+  document.getElementById('newWebhookSecret').value = '';
+  document.getElementById('newWebhookDescription').value = '';
+}
+
+async function submitNewWebhook() {
+  const url = document.getElementById('newWebhookUrl').value.trim();
+  if (!url) { alert('A URL is required.'); return; }
+  const events = readCheckedEvents('newWh');
+  if (!events.length) { alert('Pick at least one event to subscribe to.'); return; }
+  const secret = document.getElementById('newWebhookSecret').value.trim() || null;
+  const description = document.getElementById('newWebhookDescription').value.trim() || null;
+  try {
+    const res = await authFetch(`${API_BASE}/webhooks`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, events, secret, description }),
+    });
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.detail || `Request failed: ${res.status}`);
+    }
+    hideNewWebhookForm();
+    loadWebhooks();
+  } catch (e) {
+    alert(`Couldn't create webhook: ${e.message}`);
+  }
+}
+
+async function toggleWebhookActive(webhookId, newActive) {
+  try {
+    const res = await authFetch(`${API_BASE}/webhooks/${webhookId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: newActive }),
+    });
+    if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+    loadWebhooks();
+  } catch (e) {
+    alert(`Couldn't update webhook: ${e.message}`);
+  }
+}
+
+async function testWebhook(webhookId) {
+  try {
+    const res = await authFetch(`${API_BASE}/webhooks/${webhookId}/test`, { method: 'POST' });
+    if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+    const result = await res.json();
+    if (result.success) {
+      alert(`Test delivered successfully (HTTP ${result.status_code}).`);
+    } else {
+      alert(`Test delivery failed: ${result.error || 'unknown error'}`);
+    }
+  } catch (e) {
+    alert(`Couldn't send test: ${e.message}`);
+  }
+}
+
+async function deleteWebhook(webhookId) {
+  if (!confirm('Delete this webhook? This cannot be undone.')) return;
+  try {
+    const res = await authFetch(`${API_BASE}/webhooks/${webhookId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+    loadWebhooks();
+  } catch (e) {
+    alert(`Couldn't delete webhook: ${e.message}`);
+  }
+}
+
+async function viewWebhookDeliveries(webhookId, url) {
+  document.getElementById('webhooksListPanel').style.display = 'none';
+  const panel = document.getElementById('webhookDeliveriesPanel');
+  panel.style.display = 'block';
+  panel.dataset.webhookId = webhookId;
+  document.getElementById('webhookDeliveriesUrlTag').textContent = url;
+  const tbody = document.getElementById('webhookDeliveriesBody');
+  tbody.innerHTML = '<tr class="loading-row"><td colspan="4">Loading…</td></tr>';
+  try {
+    const data = await apiGet(`/webhooks/${webhookId}/deliveries?limit=30`);
+    const results = data.results || [];
+    if (!results.length) {
+      tbody.innerHTML = emptyRow(4, 'No deliveries yet', 'Nothing has fired for this webhook, or try the Test button.');
+      return;
+    }
+    tbody.innerHTML = results.map(d => `
+      <tr>
+        <td>${formatFeedTime(d.sent_at)}</td>
+        <td>${WEBHOOK_EVENT_LABELS[d.event_type] || d.event_type}</td>
+        <td>${d.success ? '<span class="badge low">delivered</span>' : '<span class="badge critical">failed</span>'}</td>
+        <td style="color:var(--text-muted); font-size:11.5px;">${d.status_code ? `HTTP ${d.status_code}` : ''}${d.error ? ` — ${d.error}` : ''}</td>
+      </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = errorRow(4, e.message);
+  }
+}
+function closeWebhookDeliveries() {
+  document.getElementById('webhookDeliveriesPanel').style.display = 'none';
+  document.getElementById('webhooksListPanel').style.display = 'block';
+}
+
+// ===== Admin Users (Settings tab, admin-only) =====
+async function loadAdminUsersIfAdmin() {
+  if (!currentUser || currentUser.role !== 'admin') return;
+  const tbody = document.getElementById('adminUsersBody');
+  tbody.innerHTML = '<tr class="loading-row"><td colspan="5">Loading…</td></tr>';
+  try {
+    const data = await apiGet('/auth/users');
+    const results = data.results || [];
+    if (!results.length) { tbody.innerHTML = emptyRow(5, 'No accounts', ''); return; }
+    tbody.innerHTML = results.map(u => `
+      <tr>
+        <td>${u.username}${u.display_name && u.display_name !== u.username ? ` <span class="lstm-hint">(${u.display_name})</span>` : ''}</td>
+        <td style="text-transform:capitalize;">${u.role}</td>
+        <td>${u.active ? '<span class="badge low">active</span>' : '<span class="badge medium">disabled</span>'}</td>
+        <td>${u.last_login ? formatFeedTime(u.last_login) : '<span class="lstm-hint">never</span>'}</td>
+        <td>
+          ${u.username === currentUser.username ? '<span class="lstm-hint">you</span>' :
+            `<button class="refresh-btn" style="padding:3px 8px; font-size:9px;" onclick="toggleUserActive('${u._id}', ${!u.active})">${u.active ? 'Disable' : 'Enable'}</button>`}
+        </td>
+      </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = errorRow(5, e.message);
+  }
+}
+function showNewUserForm() { document.getElementById('newUserFormWrap').style.display = 'block'; }
+function hideNewUserForm() {
+  document.getElementById('newUserFormWrap').style.display = 'none';
+  document.getElementById('newUserUsername').value = '';
+  document.getElementById('newUserPassword').value = '';
+  document.getElementById('newUserDisplayName').value = '';
+}
+async function submitNewUser() {
+  const username = document.getElementById('newUserUsername').value.trim();
+  const password = document.getElementById('newUserPassword').value;
+  const display_name = document.getElementById('newUserDisplayName').value.trim() || null;
+  const role = document.getElementById('newUserRole').value;
+  if (!username || !password) { alert('Username and password are required.'); return; }
+  if (password.length < 8) { alert('Password must be at least 8 characters.'); return; }
+  try {
+    const res = await authFetch(`${API_BASE}/auth/users`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, role, display_name }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `Request failed: ${res.status}`);
+    }
+    hideNewUserForm();
+    loadAdminUsersIfAdmin();
+  } catch (e) {
+    alert(`Couldn't create account: ${e.message}`);
+  }
+}
+async function toggleUserActive(userId, newActive) {
+  try {
+    const res = await authFetch(`${API_BASE}/auth/users/${userId}/active`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: newActive }),
+    });
+    if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+    loadAdminUsersIfAdmin();
+  } catch (e) {
+    alert(`Couldn't update account: ${e.message}`);
+  }
+}
+
 // ===== Theme =====
 (function () {
   const savedTheme = localStorage.getItem('siem-dashboard-theme');
@@ -2080,9 +2522,16 @@ document.addEventListener('DOMContentLoaded', updateThemeButton);
 updateThemeButton();
 
 // ===== Init =====
+applyAuthUI();
 checkStatus();
 setInterval(checkStatus, 15000);
-loadOverview();
+// Only load data once an analyst is actually signed in -- most of these
+// calls hit endpoints that now require a session token anyway, and
+// firing them before login would just produce a wall of 401s.
+if (authToken && currentUser) {
+  loadOverview();
+  loadAdminUsersIfAdmin();
+}
 </script>
 
 </body>
