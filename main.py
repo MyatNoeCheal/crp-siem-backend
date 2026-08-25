@@ -28,6 +28,7 @@ import webhooks as webhooks_module
 import auth
 
 import dataset.scripts.clean_email as ce
+from entity_risk import update_entity_risk, get_entity_risk, get_top_risk_entities, get_escalating_entities
 
 print("LOADED FILE:", ce.__file__)
 print("AVAILABLE FUNCTIONS:", dir(ce))
@@ -733,9 +734,9 @@ def get_logs_api(
         ]
 
     skip = max(page - 1, 0) * page_size
-    total = collection.count_documents(query)
+    total = logs_collection.count_documents(query)
 
-    cursor = collection.find(query).sort("_id", -1).skip(skip).limit(page_size)
+    cursor = logs_collection.find(query).sort("_id", -1).skip(skip).limit(page_size)
 
     logs = []
     for log in cursor:
@@ -1553,3 +1554,14 @@ def simulate_network_stream(count: int = 20):
         "count": inserted,
         "source": "simulated_network_stream",
     }
+    
+@app.get("/entity-risk/predictive", dependencies=[Depends(auth.get_current_user)])
+def entity_risk_predictive(entity_type: Optional[str] = None, limit: int = 10,
+                            min_velocity: float = 2.0, alert_threshold: float = 50.0):
+    if entity_type and entity_type not in ("ip", "user"):
+        raise HTTPException(status_code=400, detail="entity_type must be 'ip' or 'user'")
+    results = get_escalating_entities(
+        db, entity_type=entity_type, limit=limit,
+        min_velocity=min_velocity, alert_threshold=alert_threshold,
+    )
+    return {"results": results, "count": len(results), "alert_threshold": alert_threshold}
