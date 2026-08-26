@@ -195,3 +195,81 @@ def get_top_risk_entities(db, entity_type=None, limit=10, min_score=0.0):
 
     results.sort(key=lambda r: -r["risk_score"])
     return results[:limit]
+
+def _compute_velocity(history, lookback=5):
+    """
+    Points-per-hour rate of change over the last `lookback` history
+    entries. Returns None if there isn't enough history or the time span
+    is effectively zero (can't compute a rate).
+    """
+    if not history or len(history) < 2:
+        return None
+    recent = history[-lookback:]
+    if len(recent) < 2:
+        return None
+    try:
+        t0 = _parse_ts(recent[0]["ts"])
+        t1 = _parse_ts(recent[-1]["ts"])
+    except Exception:
+        return None
+    if t0 is None or t1 is None:
+        return None
+    hours = (t1 - t0).total_seconds() / 3600.0
+    if hours <= 0:
+        return None
+    return (recent[-1]["score"] - recent[0]["score"]) / hours
+
+
+def get_escalating_entities(db, entity_type=None, limit=10, min_velocity=2.0,
+                             alert_threshold=50.0, lookback=5):
+    """
+    EARLY WARNING / PREDICTIVE SIGNAL -- separate from get_top_risk_entities,
+    which ranks by current absolute score. This ranks by TREND: entities
+    whose risk is climbing at least `min_velocity` points/hour but hasn't
+    crossed `alert_threshold` yet. The idea: a slow burn from Low(15) to
+    Medium(35) over a few hours is worth an analyst's attention before it
+    ever fires a real alert, the same way a SOC watches for "building
+    toward something" not just "already bad".
+
+    HONEST LIMITATION -- state this in the report: eta_hours_to_threshold
+    is a NAIVE LINEAR EXTRAPOLATION from the last `lookback` history
+    points (constant-rate projection), not a trained time-series/
+    forecasting model. Real attacker behavior is often bursty rather than
+    linear, so treat this as a rough triage-ordering heuristic ("watch
+    this one first"), not a committed prediction of when an attack will
+    happen.
+    """
+    query = {}
+    if entity_type:
+        query["entity_type"] = entity_type
+
+    now = datetime.utcnow()
+    results = []
+    for doc in db.entity_risk.find(query):
+        velocity = _compute_velocity(doc.get("history", []), lookback=lookback)
+        if velocity is None or velocity < min_velocity:
+            continue
+
+        last_updated = _parse_ts(doc.get("last_updated"))
+        hours_elapsed = max((now - last_updated).total_seconds() / 3600.0, 0) if last_updated else 0
+        current_score = round(_decay(doc.get("risk_score", 0.0), hours_elapsed), 1)
+
+        if current_score >= alert_threshold:
+            continue  # already at/past the threshold -- that's Top Risk Entities' job, not an early warning anymore
+
+        eta_hours = round((alert_threshold - current_score) / velocity, 1) if velocity > 0 else None
+
+        results.append({
+            "entity_type": doc.get("entity_type"),
+            "entity_id": doc.get("entity_id"),
+            "risk_score": current_score,
+            "velocity_per_hour": round(velocity, 2),
+            "eta_hours_to_threshold": eta_hours,
+            "alert_threshold": alert_threshold,
+            "event_count": doc.get("event_count", 0),
+            "last_updated": doc.get("last_updated"),
+            "trend": [h["score"] for h in doc.get("history", [])[-10:]],
+        })
+
+    results.sort(key=lambda r: -r["velocity_per_hour"])
+    return results[:limit]

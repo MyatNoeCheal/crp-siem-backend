@@ -918,6 +918,21 @@
         </div>
       </div>
 
+      <div class="panel">
+  <div class="panel-title">
+    Early Warning <span class="lstm-user-tag">predictive · rising risk, not yet alerting</span>
+  </div>
+  <p class="lstm-hint" style="margin-bottom:10px;">
+    Entities whose risk score is climbing fast but hasn't crossed the alert threshold yet.
+    ETA is a naive linear projection from recent trend, not a forecast — treat it as
+    "watch this one first," not a committed prediction.
+  </p>
+  <table>
+    <thead><tr><th>Entity</th><th>Type</th><th>Current</th><th>Velocity</th><th>ETA to Alert</th><th>Trend</th></tr></thead>
+    <tbody id="escalatingRiskTable"><tr class="loading-row"><td colspan="6">Loading…</td></tr></tbody>
+  </table>
+</div>
+
       <!-- THREATS -->
       <div class="tab-content" id="tab-threats">
         <div class="page-header">
