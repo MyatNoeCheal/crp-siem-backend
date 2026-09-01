@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart SIEM — E-Commerce Threat Console</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='sg' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%231E2A5E'/%3E%3Cstop offset='100%25' stop-color='%230B1330'/%3E%3C/linearGradient%3E%3ClinearGradient id='og' x1='0' y1='1' x2='1' y2='0'%3E%3Cstop offset='0%25' stop-color='%232DD4FF'/%3E%3Cstop offset='100%25' stop-color='%235B7FFF'/%3E%3C/linearGradient%3E%3ClinearGradient id='bg2' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0%25' stop-color='%238FA8FF'/%3E%3Cstop offset='100%25' stop-color='%235B7FFF'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M32 3 L56 11 V29 C56 47 45 58 32 61 C19 58 8 47 8 29 V11 Z' fill='url(%23sg)' stroke='%234C6FFF' stroke-width='1.5'/%3E%3Cpath d='M32 16 C24 16 20 22 21 27 C19 29 19 34 22 36 C21 39 23 43 27 43 C28 46 32 47 32 44 Z' fill='none' stroke='url(%23bg2)' stroke-width='1.6' stroke-linejoin='round'/%3E%3Cpath d='M32 44 L32 16' stroke='url(%23bg2)' stroke-width='1.6'/%3E%3Cpath d='M32 20 L40 20 M40 20 L40 25 M40 25 L36 25 M36 25 L36 31 M36 31 L41 31 M41 31 L41 37 M41 37 L34 37 M34 37 L34 42' fill='none' stroke='%232DD4FF' stroke-width='1.4' stroke-linecap='round'/%3E%3Ccircle cx='40' cy='20' r='1.6' fill='%232DD4FF'/%3E%3Ccircle cx='36' cy='25' r='1.4' fill='%235B7FFF'/%3E%3Ccircle cx='41' cy='31' r='1.4' fill='%232DD4FF'/%3E%3Ccircle cx='34' cy='42' r='1.6' fill='%235B7FFF'/%3E%3Cpath d='M10 40 C2 34 4 22 14 16' fill='none' stroke='url(%23og)' stroke-width='2.4' stroke-linecap='round'/%3E%3Ccircle cx='14' cy='16' r='2.6' fill='%232DD4FF'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ===== Login overlay — shown until a valid session token is present ===== -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-badge"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+        <path d="M32 3 L56 11 V29 C56 47 45 58 32 61 C19 58 8 47 8 29 V11 Z" fill="#0B1330" stroke="#6C87FF" stroke-width="2"/>
+        <path d="M32 16 C24 16 20 22 21 27 C19 29 19 34 22 36 C21 39 23 43 27 43 C28 46 32 47 32 44 Z" fill="none" stroke="#8FA8FF" stroke-width="2" stroke-linejoin="round"/>
+        <path d="M32 44 L32 16" stroke="#8FA8FF" stroke-width="2"/>
+      </svg></div>
+      <div>
+        <div class="login-title">SMART SIEM</div>
+      </div>
+    </div>
+    <div class="login-sub">Analyst sign-in — E-Commerce Threat Console</div>
+    <form id="loginForm" onsubmit="return handleLoginSubmit(event)">
+      <div class="login-field">
+        <label for="loginUsername">Username</label>
+        <input type="text" id="loginUsername" autocomplete="username" required>
+      </div>
+      <div class="login-field">
+        <label for="loginPassword">Password</label>
+        <input type="password" id="loginPassword" autocomplete="current-password" required>
+      </div>
+      <div class="login-error" id="loginError"></div>
+      <button type="submit" class="login-submit" id="loginSubmitBtn">SIGN IN</button>
+    </form>
+    <div class="login-hint">No account yet? Ask an admin to create one from Settings → Admin Users, or run <code class="inline">create_admin_user.py</code> once to bootstrap the first admin.</div>
+  </div>
+</div>
+
+<div class="app-shell">
+
+  <!-- ===== Top bar ===== -->
+  <header class="topbar">
+    <button class="mobile-nav-toggle" id="mobileNavToggle" type="button" onclick="toggleMobileNav()" aria-label="Toggle navigation">☰ Menu</button>
+    <div class="topbar-logo">
+      <div class="logo-badge"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<linearGradient id="sgb" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0%" stop-color="#25335F"/>
+<stop offset="100%" stop-color="#0B1330"/>
+</linearGradient>
+<linearGradient id="ogb" x1="0" y1="1" x2="1" y2="0">
+<stop offset="0%" stop-color="#2DD4FF"/>
+<stop offset="100%" stop-color="#5B7FFF"/>
+</linearGradient>
+<linearGradient id="bgb" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0%" stop-color="#8FA8FF"/>
+<stop offset="100%" stop-color="#5B7FFF"/>
+</linearGradient>
+</defs>
+<path d="M32 3 L56 11 V29 C56 47 45 58 32 61 C19 58 8 47 8 29 V11 Z" fill="url(#sgb)" stroke="#6C87FF" stroke-width="2"/>
+<path d="M32 16 C24 16 20 22 21 27 C19 29 19 34 22 36 C21 39 23 43 27 43 C28 46 32 47 32 44 Z" fill="none" stroke="url(#bgb)" stroke-width="2.1" stroke-linejoin="round"/>
+<path d="M32 44 L32 16" stroke="url(#bgb)" stroke-width="2.1"/>
+<path d="M32 20 L40 20 M40 20 L40 25 M40 25 L36 25 M36 25 L36 31 M36 31 L41 31 M41 31 L41 37 M41 37 L34 37 M34 37 L34 42" fill="none" stroke="#2DD4FF" stroke-width="1.9" stroke-linecap="round"/>
+<circle cx="40" cy="20" r="2.1" fill="#2DD4FF"/>
+<circle cx="36" cy="25" r="1.9" fill="#8FA8FF"/>
+<circle cx="41" cy="31" r="1.9" fill="#2DD4FF"/>
+<circle cx="34" cy="42" r="2.1" fill="#8FA8FF"/>
+<path d="M8 40 C0 34 2 22 12 15" fill="none" stroke="url(#ogb)" stroke-width="3" stroke-linecap="round"/>
+<circle cx="12" cy="15" r="3.4" fill="#2DD4FF"/>
+</svg></div>
+      <span class="logo-text">SMART SIEM</span>
+    </div>
+    <div class="topbar-search">
+      <span>⌕</span>
+      <input type="text" id="globalSearch" placeholder="Search events, users, IPs…" onkeydown="if(event.key==='Enter') runGlobalSearch()">
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-icon-btn" title="Open alerts" id="notifBtn" onclick="jumpToOpenAlerts()">
+        🔔<span class="ping" id="notifPing" style="display:none;">0</span>
+      </div>
+      <div class="topbar-clock">
+        <div class="clock-label">System Time</div>
+        <div class="clock-value" id="clockValue">—</div>
+      </div>
+      <div class="topbar-user" id="topbarUser" style="display:none;">
+        <span class="u-name" id="topbarUserName">—</span>
+        <span class="u-role" id="topbarUserRole">—</span>
+        <button class="logout-btn" onclick="logout()">Sign out</button>
+      </div>
+      <div class="topbar-avatar"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<linearGradient id="sga" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0%" stop-color="#25335F"/>
+<stop offset="100%" stop-color="#0B1330"/>
+</linearGradient>
+<linearGradient id="oga" x1="0" y1="1" x2="1" y2="0">
+<stop offset="0%" stop-color="#2DD4FF"/>
+<stop offset="100%" stop-color="#5B7FFF"/>
+</linearGradient>
+<linearGradient id="bga" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0%" stop-color="#8FA8FF"/>
+<stop offset="100%" stop-color="#5B7FFF"/>
+</linearGradient>
+</defs>
+<path d="M32 3 L56 11 V29 C56 47 45 58 32 61 C19 58 8 47 8 29 V11 Z" fill="url(#sga)" stroke="#6C87FF" stroke-width="2"/>
+<path d="M32 16 C24 16 20 22 21 27 C19 29 19 34 22 36 C21 39 23 43 27 43 C28 46 32 47 32 44 Z" fill="none" stroke="url(#bga)" stroke-width="2.1" stroke-linejoin="round"/>
+<path d="M32 44 L32 16" stroke="url(#bga)" stroke-width="2.1"/>
+<path d="M32 20 L40 20 M40 20 L40 25 M40 25 L36 25 M36 25 L36 31 M36 31 L41 31 M41 31 L41 37 M41 37 L34 37 M34 37 L34 42" fill="none" stroke="#2DD4FF" stroke-width="1.9" stroke-linecap="round"/>
+<circle cx="40" cy="20" r="2.1" fill="#2DD4FF"/>
+<circle cx="36" cy="25" r="1.9" fill="#8FA8FF"/>
+<circle cx="41" cy="31" r="1.9" fill="#2DD4FF"/>
+<circle cx="34" cy="42" r="2.1" fill="#8FA8FF"/>
+<path d="M8 40 C0 34 2 22 12 15" fill="none" stroke="url(#oga)" stroke-width="3" stroke-linecap="round"/>
+<circle cx="12" cy="15" r="3.4" fill="#2DD4FF"/>
+</svg></div>
+      <button class="theme-toggle-btn" id="themeToggle" type="button" onclick="toggleTheme()">DARK THEME</button>
+    </div>
+  </header>
+
+  <div class="body-row">
+    <!-- ===== Sidebar ===== -->
+    <div class="sidebar" id="sidebar">
+      <nav id="navList">
+        <div class="nav-item active" data-tab="overview"><span class="nav-icon">◆</span>Overview</div>
+        <div class="nav-item" data-tab="threats"><span class="nav-icon">▲</span>Threats</div>
+        <div class="nav-item" data-tab="cases"><span class="nav-icon">▦</span>Cases</div>
+        <div class="nav-item" data-tab="fraud"><span class="nav-icon">$</span>Fraud Detection</div>
+        <div class="nav-item" data-tab="user-behavior"><span class="nav-icon">◉</span>User Behavior</div>
+        <div class="nav-item" data-tab="admin-activity"><span class="nav-icon">▣</span>Admin Activity</div>
+        <div class="nav-item" data-tab="ai-insights"><span class="nav-icon">✦</span>AI Insights</div>
+        <div class="nav-item" data-tab="logs"><span class="nav-icon">≡</span>Logs</div>
+        <div class="nav-item" data-tab="reports"><span class="nav-icon">▤</span>Reports</div>
+        <div class="nav-item" data-tab="settings"><span class="nav-icon">⚚</span>Settings</div>
+      </nav>
+      <div class="sidebar-status">
+        <div class="sidebar-status-label">System Status</div>
+        <div class="sidebar-status-row"><div class="status-dot" id="statusDot"></div><span id="statusLabel">Connecting…</span></div>
+        <div style="font-family:var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top:8px;">
+          API: <span id="apiBaseLabel">—</span>
+        </div>
+      </div>
+    </div>
+    <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="toggleMobileNav()"></div>
+
+    <!-- ===== Main ===== -->
+    <div class="main">
+
+      <!-- OVERVIEW -->
+      <div class="tab-content active" id="tab-overview">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Overview</div>
+            <div class="page-sub">Real-time security monitoring and AI-powered threat detection</div>
+          </div>
+          <button class="refresh-btn" onclick="loadOverview()">↻ REFRESH</button>
+        </div>
+
+        <div class="kpi-grid-v2" id="overviewKpisV2">
+          <!-- filled by JS -->
+        </div>
+
+        <div class="row3">
+          <div class="panel">
+            <div class="panel-title">Threat Activity (Last 24 Hours)</div>
+            <div class="chart-wrap"><canvas id="timelineChart"></canvas></div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">Event Severity</div>
+            <div class="donut-wrap">
+              <div class="donut-canvas-holder">
+                <canvas id="categoryChart"></canvas>
+                <div class="donut-center"><div class="n" id="severityDonutTotal">—</div><div class="l">Total</div></div>
+              </div>
+              <div class="donut-legend" id="severityLegend"><p class="lstm-hint">Loading…</p></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">AI Detection <span class="lstm-user-tag">live</span></div>
+            <div class="gauge-row" id="aiGaugeRow">
+              <div class="gauge-block"><p class="lstm-hint">Loading…</p></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row2">
+          <div class="panel">
+            <div class="panel-title">Recent Alerts <span class="panel-title-link" onclick="jumpToOpenAlerts()">View all →</span></div>
+            <div id="recentAlertsList"><p class="lstm-hint">Loading…</p></div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">Live Activity <span class="lstm-user-tag" id="liveFeedTag"></span></div>
+            <div id="liveFeedList" style="max-height:280px; overflow-y:auto;"><p class="lstm-hint">Loading…</p></div>
+          </div>
+        </div>
+
+        <div class="row3">
+          <div class="panel">
+            <div class="panel-title">Top Threat Sources</div>
+            <table>
+              <thead><tr><th>IP Address</th><th>Events</th><th>Peak</th></tr></thead>
+              <tbody id="topIpsTable"><tr class="loading-row"><td colspan="3">Loading…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="panel">
+            <div class="panel-title">Top Affected Users</div>
+            <table>
+              <thead><tr><th>User</th><th>Events</th><th>Peak</th></tr></thead>
+              <tbody id="topUsersTable"><tr class="loading-row"><td colspan="3">Loading…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="panel">
+            <div class="panel-title">Event Types</div>
+            <div id="eventTypesList"><p class="lstm-hint">Loading…</p></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">
+            Top Risk Entities <span class="lstm-user-tag">UEBA · time-decaying</span>
+          </div>
+          <p class="lstm-hint" style="margin-bottom:10px;">
+            Persistent risk per IP/user, accumulated across all activity and decaying over a 7-day half-life —
+            not a single event's score. An entity with repeated moderate-risk activity climbs here even if no
+            single event alone would trigger an alert.
+          </p>
+          <table>
+            <thead><tr><th>Entity</th><th>Type</th><th>Risk Score</th><th>Trend</th><th>Events</th><th>Last Activity</th></tr></thead>
+            <tbody id="entityRiskTable"><tr class="loading-row"><td colspan="6">Loading…</td></tr></tbody>
+          </table>
+        </div>
+
+        <!-- Early Warning: predictive risk velocity panel (see entity_risk.py's
+             get_escalating_entities). Complements Top Risk Entities above by
+             surfacing entities trending upward before they cross the alert line. -->
+        <div class="panel">
+          <div class="panel-title">
+            Early Warning <span class="lstm-user-tag">predictive · rising risk, not yet alerting</span>
+          </div>
+          <p class="lstm-hint" style="margin-bottom:10px;">
+            Entities whose risk score is climbing fast but hasn't crossed the alert threshold yet.
+            ETA is a naive linear projection from recent trend, not a forecast — treat it as
+            "watch this one first," not a committed prediction.
+          </p>
+          <table>
+            <thead><tr><th>Entity</th><th>Type</th><th>Current</th><th>Velocity</th><th>ETA to Alert</th><th>Trend</th></tr></thead>
+            <tbody id="escalatingRiskTable"><tr class="loading-row"><td colspan="6">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- THREATS -->
+      <div class="tab-content" id="tab-threats">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Threats</div>
+            <div class="page-sub">Real-time security events flagged by the detection engine</div>
+          </div>
+          <button class="refresh-btn" onclick="loadThreats()">↻ REFRESH</button>
+        </div>
+        <div class="panel">
+          <div class="filter-row">
+            <label class="filter-checkbox"><input type="checkbox" id="threatsAnomalyOnly" checked onchange="loadThreats()"> Anomalies only</label>
+            <label class="filter-checkbox"><input type="checkbox" id="threatsGroupIncidents" checked onchange="loadThreats()"> Group into incidents</label>
+            <label class="filter-checkbox">Status:
+              <select id="threatsStatusFilter" onchange="loadThreats()">
+                <option value="">All</option>
+                <option value="open">Open</option>
+                <option value="new">New</option>
+                <option value="investigating">Investigating</option>
+                <option value="resolved">Resolved</option>
+                <option value="false_positive">False Positive</option>
+              </select>
+            </label>
+            <label class="filter-checkbox">Sort:
+              <select id="threatsSortBy" onchange="loadThreats()">
+                <option value="priority">Priority</option>
+                <option value="recency">Most Recent</option>
+              </select>
+            </label>
+          </div>
+          <table>
+            <thead><tr><th>Last Seen</th><th>Count</th><th>IP</th><th>Event Type</th><th>Severity</th><th>Risk Score</th><th>Priority</th><th>Status</th><th>Reason</th></tr></thead>
+            <tbody id="threatsBody"><tr class="loading-row"><td colspan="9">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CASES -->
+      <div class="tab-content" id="tab-cases">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Cases</div>
+            <div class="page-sub">Investigation workflow — group related alerts, assign, and track progress</div>
+          </div>
+          <button class="refresh-btn" onclick="loadCases()">↻ REFRESH</button>
+        </div>
+
+        <div id="casesListView">
+          <div class="panel">
+            <div class="filter-row">
+              <button class="refresh-btn" onclick="showNewCaseForm()">+ NEW CASE</button>
+              <select id="casesStatusFilter" onchange="loadCases()">
+                <option value="">All statuses</option>
+                <option value="open">Open</option>
+                <option value="investigating">Investigating</option>
+                <option value="contained">Contained</option>
+                <option value="closed">Closed</option>
+              </select>
+            </div>
+            <div id="newCaseFormWrap" style="display:none; margin-bottom:16px; padding:14px; background:var(--input-bg); border:1px solid var(--border); border-radius:10px;">
+              <div class="filter-row"><input type="text" id="newCaseTitle" placeholder="Case title…" style="width:100%;"></div>
+              <div class="filter-row"><input type="text" id="newCaseTags" placeholder="Tags, comma separated (optional)" style="width:100%;"></div>
+              <button class="refresh-btn" onclick="submitNewCase()">Create</button>
+              <button class="refresh-btn" onclick="hideNewCaseForm()">Cancel</button>
+            </div>
+            <table>
+              <thead><tr><th>Title</th><th>Status</th><th>Severity</th><th>Alerts</th><th>Assigned</th><th>Updated</th></tr></thead>
+              <tbody id="casesBody"><tr class="loading-row"><td colspan="6">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="caseDetailView" style="display:none;">
+          <button class="refresh-btn" style="margin-bottom:14px;" onclick="closeCaseDetail()">← Back to Cases</button>
+          <div class="panel" id="caseDetailPanel"><p class="lstm-hint">Loading…</p></div>
+        </div>
+      </div>
+
+      <!-- FRAUD -->
+      <div class="tab-content" id="tab-fraud">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Fraud Detection</div>
+            <div class="page-sub">Transaction &amp; payment anomaly monitoring</div>
+          </div>
+          <button class="refresh-btn" onclick="loadFraud()">↻ REFRESH</button>
+        </div>
+        <div class="note-banner">
+          Live scoring here is rule-based (flags transactions ≥ a configurable amount). The trained Autoencoder is evaluated offline against the credit-card fraud dataset — see the Evaluation Framework section of the report for those metrics.
+        </div>
+        <div class="kpi-grid-v2" style="margin-bottom:18px;">
+          <div class="kpi-card-v2"><div class="kpi-label-v2">Flagged Transactions</div><div class="kpi-value-v2" id="fraudCount">—</div></div>
+          <div class="kpi-card-v2"><div class="kpi-label-v2">Total Flagged Amount</div><div class="kpi-value-v2 accent" id="fraudAmount">—</div></div>
+        </div>
+        <div class="panel">
+          <div class="filter-row"><input type="number" id="fraudMinAmount" placeholder="Min amount ($)" oninput="loadFraud()"></div>
+          <table>
+            <thead><tr><th>Timestamp</th><th>User</th><th>IP</th><th>Amount</th><th>Risk Score</th><th>Reason</th></tr></thead>
+            <tbody id="fraudBody"><tr class="loading-row"><td colspan="6">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- USER BEHAVIOR -->
+      <div class="tab-content" id="tab-user-behavior">
+        <div class="page-header">
+          <div>
+            <div class="page-title">User Behavior</div>
+            <div class="page-sub">Customer &amp; account activity analytics</div>
+          </div>
+          <button class="refresh-btn" onclick="loadUserBehavior()">↻ REFRESH</button>
+        </div>
+        <div class="panel" id="lstmRiskPanel" style="display:none;">
+          <div class="panel-title">Hybrid Risk Assessment<span class="lstm-user-tag" id="lstmUserTag"></span></div>
+          <div id="lstmRiskContent"><p class="lstm-hint">Loading…</p></div>
+        </div>
+        <div class="panel">
+          <div class="filter-row"><input type="text" id="userBehaviorFilter" placeholder="Filter by user ID…" oninput="loadUserBehavior()"></div>
+          <table>
+            <thead><tr><th>Timestamp</th><th>User ID</th><th>IP</th><th>Event Type</th><th>Severity</th></tr></thead>
+            <tbody id="userBehaviorBody"><tr class="loading-row"><td colspan="5">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ADMIN ACTIVITY -->
+      <div class="tab-content" id="tab-admin-activity">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Admin Activity</div>
+            <div class="page-sub">Internal &amp; insider misuse monitoring</div>
+          </div>
+          <button class="refresh-btn" onclick="loadAdminActivity()">↻ REFRESH</button>
+        </div>
+        <div class="panel">
+          <table>
+            <thead><tr><th>Timestamp</th><th>Admin User</th><th>IP</th><th>Event Type</th><th>Severity</th></tr></thead>
+            <tbody id="adminActivityBody"><tr class="loading-row"><td colspan="5">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- AI INSIGHTS -->
+      <div class="tab-content" id="tab-ai-insights">
+        <div class="page-header">
+          <div>
+            <div class="page-title">AI Insights</div>
+            <div class="page-sub">Rule-based threat intelligence &amp; explanations</div>
+          </div>
+          <button class="refresh-btn" onclick="loadAiInsights()">↻ REFRESH</button>
+        </div>
+        <div class="panel">
+          <div class="panel-title">Summary</div>
+          <p id="aiInsightsSummary" style="color: var(--text-muted); font-size: 13px; line-height: 1.6;">Loading…</p>
+        </div>
+        <div class="panel" id="aiTopRisksPanel" style="display:none;">
+          <div class="panel-title">Top Risks</div>
+          <div id="aiTopRisksList"></div>
+        </div>
+      </div>
+
+      <!-- LOGS -->
+      <div class="tab-content" id="tab-logs">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Logs</div>
+            <div class="page-sub">Full event log — search, filter, and page through raw records</div>
+          </div>
+          <button class="refresh-btn" onclick="loadLogs()">↻ REFRESH</button>
+        </div>
+        <div class="panel">
+          <div class="filter-row">
+            <input type="text" id="logsSearch" placeholder="Search…" oninput="debouncedLogsSearch()">
+            <input type="text" id="logsEventType" placeholder="Event type" oninput="debouncedLogsSearch()">
+            <select id="logsSeverity" onchange="loadLogs()">
+              <option value="">All severities</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+          </div>
+          <table>
+            <thead><tr><th>Timestamp</th><th>IP</th><th>Event Type</th><th>Severity</th></tr></thead>
+            <tbody id="logsBody"><tr class="loading-row"><td colspan="4">Loading…</td></tr></tbody>
+          </table>
+          <div class="pagination">
+            <button id="logsPrevBtn" onclick="changeLogsPage(-1)">← Prev</button>
+            <span class="page-info" id="logsPageInfo">Page 1</span>
+            <button id="logsNextBtn" onclick="changeLogsPage(1)">Next →</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- REPORTS (placeholder — not backed by an endpoint yet) -->
+      <div class="tab-content" id="tab-reports">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Reports</div>
+            <div class="page-sub">Exportable evaluation &amp; incident summaries</div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="placeholder-panel">
+            <div class="p-icon">▤</div>
+            <div class="p-title">Not wired up yet</div>
+            <div class="p-sub">This tab isn't backed by an API endpoint in this build. The evaluation charts and metrics for the report live in <code class="inline">evaluation_output/</code> from <code class="inline">evaluate_model.py</code>, <code class="inline">evaluate_lstm_model.py</code>, and <code class="inline">evaluate_network_intrusion_model.py</code> instead.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SETTINGS -->
+      <div class="tab-content" id="tab-settings">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Settings</div>
+            <div class="page-sub">Console preferences &amp; integrations</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="placeholder-panel" style="padding:24px 20px;">
+            <div class="p-sub" style="max-width:none; text-align:left;">Signed-in analysts can triage alerts, work cases, and configure webhooks. The theme toggle (top right) is the one display setting, saved to this browser automatically. Webhook deletion and account management below are restricted to admins.</div>
+          </div>
+        </div>
+
+        <div class="panel admin-only" id="adminUsersPanel">
+          <div class="panel-title">
+            Admin Users
+            <span class="panel-title-link" onclick="showNewUserForm()">+ New Account</span>
+          </div>
+          <p class="lstm-hint" style="margin-bottom:14px;">Create and manage analyst/admin accounts for this console. Visible to admins only.</p>
+          <div id="newUserFormWrap" style="display:none; margin-bottom:16px; padding:14px; background:var(--input-bg); border:1px solid var(--border); border-radius:10px;">
+            <div class="filter-row"><input type="text" id="newUserUsername" placeholder="Username" style="width:100%;"></div>
+            <div class="filter-row"><input type="password" id="newUserPassword" placeholder="Password (min 8 chars)" style="width:100%;"></div>
+            <div class="filter-row"><input type="text" id="newUserDisplayName" placeholder="Display name (optional)" style="width:100%;"></div>
+            <div class="filter-row">
+              <label class="filter-checkbox">Role:
+                <select id="newUserRole">
+                  <option value="analyst">Analyst</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+            </div>
+            <button class="refresh-btn" onclick="submitNewUser()">Create</button>
+            <button class="refresh-btn" onclick="hideNewUserForm()">Cancel</button>
+          </div>
+          <table>
+            <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Last Login</th><th></th></tr></thead>
+            <tbody id="adminUsersBody"><tr class="loading-row"><td colspan="5">Loading…</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="panel" id="webhooksListPanel">
+          <div class="panel-title">
+            Webhook Notifications
+            <span class="panel-title-link" onclick="showNewWebhookForm()">+ New Webhook</span>
+          </div>
+          <p class="lstm-hint" style="margin-bottom:14px;">
+            Sends a POST request to an external URL whenever a subscribed event happens — a new alert, an alert's status changing, a case being created, a case's status changing, or an investigation note being added. If a secret is set, each payload is HMAC-SHA256 signed via the <code class="inline">X-SIEM-Signature</code> header so the receiver can verify it's genuine.
+          </p>
+          <div id="newWebhookFormWrap" style="display:none; margin-bottom:16px; padding:14px; background:var(--input-bg); border:1px solid var(--border); border-radius:10px;">
+            <div class="filter-row"><input type="text" id="newWebhookUrl" placeholder="https://your-endpoint.example.com/siem-events" style="width:100%;"></div>
+            <div class="filter-row"><input type="text" id="newWebhookSecret" placeholder="Signing secret (optional)" style="width:100%;"></div>
+            <div class="filter-row"><input type="text" id="newWebhookDescription" placeholder="Description (optional, e.g. 'Slack #soc-alerts')" style="width:100%;"></div>
+            <div id="newWebhookEventsWrap" class="filter-row" style="flex-wrap:wrap;"></div>
+            <button class="refresh-btn" onclick="submitNewWebhook()">Create</button>
+            <button class="refresh-btn" onclick="hideNewWebhookForm()">Cancel</button>
+          </div>
+          <table>
+            <thead><tr><th>URL</th><th>Events</th><th>Status</th><th>Signed</th><th></th></tr></thead>
+            <tbody id="webhooksBody"><tr class="loading-row"><td colspan="5">Loading…</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="panel" id="webhookDeliveriesPanel" style="display:none;">
+          <div class="panel-title">
+            Recent Deliveries <span class="lstm-user-tag" id="webhookDeliveriesUrlTag"></span>
+            <span class="panel-title-link" onclick="closeWebhookDeliveries()">← Back</span>
+          </div>
+          <table>
+            <thead><tr><th>Sent</th><th>Event</th><th>Result</th><th>Detail</th></tr></thead>
+            <tbody id="webhookDeliveriesBody"><tr class="loading-row"><td colspan="4">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="dashboard.js"></script>
+</body>
+</html>

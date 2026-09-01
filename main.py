@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import os
 import json
 import math
+import requests
 
 from ai.detector import AnomalyDetector
 from models import LogData, LogEvent
@@ -169,6 +170,156 @@ class WebhookUpdate(BaseModel):
     secret: Optional[str] = None
     description: Optional[str] = None
     active: Optional[bool] = None
+
+
+class AssistantMessage(BaseModel):
+    role: str
+    content: str
+
+
+class AssistantChatRequest(BaseModel):
+    message: str
+    history: Optional[List[AssistantMessage]] = None
+    focus: Optional[str] = None
+
+
+def _json_safe(value):
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    return value
+
+
+def _assistant_siem_context():
+    recent_alerts = list(alerts_collection.find().sort("_id", -1).limit(8))
+    recent_logs = list(logs_collection.find().sort("_id", -1).limit(12))
+    top_entities = get_top_risk_entities(db, limit=6, min_score=0.0)
+    predictive_entities = get_escalating_entities(
+        db, limit=6, min_velocity=1.0, alert_threshold=50.0
+    )
+
+    category_counts = {}
+    for row in logs_collection.aggregate([
+        {"$group": {"_id": "$category", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]):
+        category_counts[row.get("_id") or "unknown"] = row.get("count", 0)
+
+    return {
+        "totals": {
+            "events": logs_collection.count_documents({}),
+            "alerts": alerts_collection.count_documents({}),
+            "open_alerts": alerts_collection.count_documents(
+                {"status": {"$in": ["new", "investigating"]}}
+            ),
+            "critical_events": logs_collection.count_documents({"risk_level": "Critical"}),
+            "anomalies": logs_collection.count_documents({"anomaly": True}),
+        },
+        "category_counts": category_counts,
+        "recent_alerts": _json_safe(recent_alerts),
+        "recent_logs": _json_safe(recent_logs),
+        "top_risk_entities": _json_safe(top_entities),
+        "predictive_risk": _json_safe(predictive_entities),
+    }
+
+
+def _assistant_fallback_reply(question, context):
+    totals = context["totals"]
+    open_alerts = totals["open_alerts"]
+    critical = totals["critical_events"]
+    anomalies = totals["anomalies"]
+    top_alert = context["recent_alerts"][0] if context["recent_alerts"] else None
+    top_entity = context["top_risk_entities"][0] if context["top_risk_entities"] else None
+
+    lines = [
+        "I can operate in local SOC mode while Qwen is not configured.",
+        f"Current posture: {open_alerts} open alerts, {critical} critical events, and {anomalies} anomalous events.",
+    ]
+
+    if top_alert:
+        lines.append(
+            "Highest immediate lead: "
+            f"{top_alert.get('event_type', 'unknown event')} from {top_alert.get('ip', 'unknown source')} "
+            f"with status {top_alert.get('status', 'unknown')}."
+        )
+
+    if top_entity:
+        entity_label = top_entity.get("entity_id") or top_entity.get("id") or "unknown entity"
+        score = top_entity.get("risk_score") or top_entity.get("score") or 0
+        lines.append(f"Watch entity {entity_label}; its risk score is around {round(score, 2)}.")
+
+    lines.append(
+        "Recommended next move: open the latest critical alert, compare it with the same IP/user in entity risk, "
+        "then create or update a case before taking containment action."
+    )
+    lines.append(f"Your question was: {question}")
+    return "\n\n".join(lines)
+
+
+def _call_qwen_assistant(question, history, focus, context):
+    api_key = os.getenv("QWEN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+    if not api_key:
+        return None
+
+    base_url = os.getenv(
+        "QWEN_BASE_URL",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    ).rstrip("/")
+    model = os.getenv("QWEN_MODEL", "qwen-plus")
+
+    system_prompt = (
+        "You are OpenJarvis inside a SIEM command center. Be concise, calm, and operational. "
+        "Use the supplied SIEM context as evidence. Never claim you performed containment, deletion, "
+        "blocking, or escalation unless the user explicitly asks and a backend tool exists. "
+        "For risky actions, propose a human approval step. Prefer analyst-ready bullets: assessment, "
+        "evidence, next actions."
+    )
+
+    messages = [{"role": "system", "content": system_prompt}]
+    for item in (history or [])[-8:]:
+        if item.role in {"user", "assistant"} and item.content:
+            messages.append({"role": item.role, "content": item.content})
+    messages.append({
+        "role": "user",
+        "content": json.dumps(
+            {
+                "analyst_question": question,
+                "focus": focus,
+                "siem_context": context,
+            },
+            default=str,
+        ),
+    })
+
+    try:
+        response = requests.post(
+            f"{base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": messages,
+                "temperature": 0.25,
+                "max_tokens": 900,
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as exc:
+        return (
+            "Qwen is configured, but the model call failed. "
+            f"Backend error: {exc}. "
+            + _assistant_fallback_reply(question, context)
+        )
 
 
 def _upsert_alert(event_dict, score, level, is_anomaly, reasons, category,
@@ -1498,6 +1649,38 @@ def ai_insights(limit: int = 50):
         e["_id"] = str(e["_id"])
 
     return generate_insights(recent_events)
+
+
+# =========================
+# OPENJARVIS ASSISTANT — read-only SOC copilot backed by Qwen when
+# QWEN_API_KEY/DASHSCOPE_API_KEY is configured. The assistant receives
+# compact live SIEM context and returns analyst guidance; containment and
+# case mutations remain explicit API actions elsewhere in the backend.
+# =========================
+@app.get("/assistant/context", dependencies=[Depends(auth.get_current_user)])
+def assistant_context():
+    return _assistant_siem_context()
+
+
+@app.post("/assistant/chat", dependencies=[Depends(auth.get_current_user)])
+def assistant_chat(payload: AssistantChatRequest):
+    question = (payload.message or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    context = _assistant_siem_context()
+    answer = _call_qwen_assistant(question, payload.history, payload.focus, context)
+    provider = "qwen"
+    if not answer:
+        answer = _assistant_fallback_reply(question, context)
+        provider = "local-fallback"
+
+    return {
+        "reply": answer,
+        "provider": provider,
+        "model": os.getenv("QWEN_MODEL", "qwen-plus") if provider == "qwen" else "local-soc-rules",
+        "context": context,
+    }
 
 
 # =========================
