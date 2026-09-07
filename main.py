@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from bson import ObjectId
 from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 import json
 import math
@@ -1215,11 +1215,19 @@ def overview():
 def _parse_ts(value):
     """Best-effort parser for the timestamp strings clients send us --
     they're plain strings on LogEvent, not a Mongo Date type, so we parse
-    on read rather than relying on Mongo to sort/bucket them for us."""
+    on read rather than relying on Mongo to sort/bucket them for us.
+    Always returns a NAIVE UTC datetime (or None) so it can be safely
+    compared against datetime.utcnow() -- some newer event sources emit
+    timestamps with explicit timezone info ("Z" / "+00:00"), which
+    datetime.fromisoformat() parses as tz-aware and Python refuses to
+    compare against a naive datetime.utcnow()."""
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
     except Exception:
         return None
 
@@ -1490,6 +1498,161 @@ def fraud(limit: int = 100, min_amount: Optional[float] = None):
         "count": len(results),
         "total_flagged_amount": total_flagged_amount,
     }
+
+
+# =========================
+# FRAUD: STATS / TREND / SEVERITY DISTRIBUTION / DETAIL / MODEL METRICS
+# — powers the React Fraud Detection page's overview cards, trend chart,
+# severity donut, per-transaction investigation panel, and the model
+# evaluation card. All derived from the same logs_collection documents
+# /fraud already returns -- no new data source, just different views
+# over it, computed server-side instead of duplicating this logic in
+# the frontend.
+# =========================
+
+FRAUD_RISK_THRESHOLDS = {"critical": 85, "high": 60, "medium": 30}
+
+
+def _fraud_risk_level(score):
+    score = score or 0
+    if score >= FRAUD_RISK_THRESHOLDS["critical"]:
+        return "Critical"
+    if score >= FRAUD_RISK_THRESHOLDS["high"]:
+        return "High"
+    if score >= FRAUD_RISK_THRESHOLDS["medium"]:
+        return "Medium"
+    return "Low"
+
+
+@app.get("/fraud/stats", dependencies=[Depends(auth.get_current_user)])
+def fraud_stats(scan_limit: int = 2000):
+    """
+    Overview numbers for the Fraud Detection page's top stat row.
+    total_transactions counts every category="fraud" event scanned
+    (flagged or not); fraud_detected/high_risk_count are the subset
+    that actually crossed a risk threshold -- an honest distinction
+    between "transactions seen" and "transactions caught", same as
+    the pattern used elsewhere in this API (e.g. /overview's
+    events_by_category vs /threats' flagged alerts).
+    """
+    cursor = logs_collection.find(
+        {"category": "fraud"}, {"risk_score": 1, "anomaly": 1}
+    ).sort("_id", -1).limit(scan_limit)
+
+    total = 0
+    fraud_detected = 0
+    high_risk = 0
+    risk_sum = 0.0
+
+    for doc in cursor:
+        total += 1
+        score = doc.get("risk_score") or 0
+        risk_sum += score
+        if doc.get("anomaly") or score >= FRAUD_RISK_THRESHOLDS["high"]:
+            fraud_detected += 1
+        if score >= FRAUD_RISK_THRESHOLDS["high"]:
+            high_risk += 1
+
+    return {
+        "total_transactions": total,
+        "fraud_detected": fraud_detected,
+        "fraud_rate": round((fraud_detected / total * 100), 2) if total else 0,
+        "avg_risk_score": round(risk_sum / total, 1) if total else 0,
+        "high_risk_count": high_risk,
+    }
+
+
+@app.get("/fraud/trend", dependencies=[Depends(auth.get_current_user)])
+def fraud_trend(days: int = 14, scan_limit: int = 3000):
+    """
+    Daily fraud volume for the trend chart. Buckets by calendar day
+    (UTC) rather than a fixed hour count, since fraud events are
+    naturally lower-volume than general traffic -- daily buckets stay
+    meaningful even on a fresh/lightly-seeded database.
+    """
+    now = datetime.utcnow()
+    window_start = now - timedelta(days=days)
+
+    buckets = {}
+    for i in range(days):
+        day = (window_start + timedelta(days=i)).strftime("%Y-%m-%d")
+        buckets[day] = {"date": day, "fraud_count": 0, "total_count": 0}
+
+    cursor = logs_collection.find(
+        {"category": "fraud"}, {"timestamp": 1, "anomaly": 1, "risk_score": 1}
+    ).sort("_id", -1).limit(scan_limit)
+
+    for doc in cursor:
+        ts = _parse_ts(doc.get("timestamp"))
+        if ts is None or ts < window_start or ts > now:
+            continue
+        day = ts.strftime("%Y-%m-%d")
+        if day not in buckets:
+            continue
+        buckets[day]["total_count"] += 1
+        score = doc.get("risk_score") or 0
+        if doc.get("anomaly") or score >= FRAUD_RISK_THRESHOLDS["high"]:
+            buckets[day]["fraud_count"] += 1
+
+    return sorted(buckets.values(), key=lambda b: b["date"])
+
+
+@app.get("/fraud/severity-distribution", dependencies=[Depends(auth.get_current_user)])
+def fraud_severity_distribution(scan_limit: int = 2000):
+    """
+    Same Low/Medium/High/Critical bands used by fraud_stream.py's
+    _risk_level() and the rest of this API, for consistency between
+    the live stream demo and this aggregate view.
+    """
+    counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
+    cursor = logs_collection.find({"category": "fraud"}, {"risk_score": 1}).limit(scan_limit)
+    for doc in cursor:
+        counts[_fraud_risk_level(doc.get("risk_score"))] += 1
+
+    return [{"name": k, "value": v} for k, v in counts.items()]
+
+
+@app.get("/fraud/model-metrics", dependencies=[Depends(auth.get_current_user)])
+def fraud_model_metrics():
+    """
+    Serves the Fraud Autoencoder's real offline test-set evaluation
+    (precision/recall/f1/auprc) from fraud_threshold.json's test_metrics
+    -- the same file train_autoencoder_local.py / evaluate_model.py
+    already produce. Never computed live: live checkout events don't
+    carry the PCA-anonymized V1-V28 feature vector this model needs
+    (see fraud_inference.py's module docstring), so these numbers are
+    the model's genuine held-out test performance, not a live metric.
+    """
+    path = os.path.join(os.path.dirname(__file__), "fraud_threshold.json")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="fraud_threshold.json not found on this server")
+    with open(path) as f:
+        meta = json.load(f)
+    metrics = meta.get("test_metrics")
+    if not metrics:
+        raise HTTPException(status_code=404, detail="No test_metrics recorded in fraud_threshold.json")
+    return metrics
+
+
+@app.get("/fraud/{transaction_id}", dependencies=[Depends(auth.get_current_user)])
+def fraud_transaction_detail(transaction_id: str):
+    """
+    Single-transaction detail for the investigation slide-over panel.
+    Returns the full stored document (including top_features/reason,
+    when present from fraud_stream.py's XAI attribution) rather than a
+    trimmed view, so the panel can show everything genuinely on record.
+    """
+    try:
+        oid = ObjectId(transaction_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid transaction id")
+
+    doc = logs_collection.find_one({"_id": oid, "category": "fraud"})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    doc["_id"] = str(doc["_id"])
+    return doc
 
 
 # =========================
