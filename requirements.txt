@@ -19,6 +19,7 @@ shap
 scipy
 
 requests
+python-dotenv
 
 # For auth.py (analyst login + RBAC — JWT sessions, password hashing)
 python-jose[cryptography]

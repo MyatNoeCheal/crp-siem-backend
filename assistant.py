@@ -55,8 +55,9 @@ import json
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
+from dotenv import load_dotenv
 import requests
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from bson import ObjectId
 
@@ -65,20 +66,28 @@ from auth import get_current_user
 import entity_risk
 import ai_insights
 
+load_dotenv()
+
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
+# LLM backend selection. Default remains Ollama for backward compatibility,
+# but the faster option for CPU-limited machines is an OpenAI-compatible
+# hosted provider like OpenRouter. Set LLM_PROVIDER=openrouter and provide
+# LLM_API_KEY / OPENROUTER_API_KEY to offload inference to the cloud.
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama").lower()
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b")
+OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "2048"))
+LLM_API_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1/chat/completions")
+LLM_MODEL = os.environ.get("LLM_MODEL", "openai/gpt-4o-mini")
+LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "800"))
 
-# Per-request timeout (seconds) for each call to Ollama's /api/chat.
-# The tool-calling loop below can make several of these calls in a row
-# (up to 5 rounds), and on CPU-only inference a single round with the
-# full TOOLS schema attached can easily take 20-30+ seconds -- the old
-# flat 60s default was tight enough to intermittently trip
-# requests.exceptions.ReadTimeout on a normal, successful exchange, not
-# just on genuine hangs. Configurable via env var so this can be tuned
-# per machine (GPU vs CPU) without editing code.
-OLLAMA_TIMEOUT_SECONDS = int(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "180"))
+# Per-request timeout (seconds) for each LLM provider call. Ollama can be
+# slow on CPU-only machines; hosted models are much faster and usually more
+# reliable for tool-calling loops, but keep a generous timeout to avoid
+# spurious 504s during the first response.
+LLM_TIMEOUT_SECONDS = int(os.environ.get("LLM_TIMEOUT_SECONDS") or os.environ.get("OLLAMA_TIMEOUT_SECONDS", "180"))
 
 VALID_PAGES = [
     "overview", "threats", "cases", "fraud",
@@ -331,10 +340,52 @@ def _dispatch_tool(db, name: str, args: dict) -> dict:
 
 
 # =========================
-# Ollama tool-calling loop
+# Hosted/OpenAI-compatible + local Ollama tool-calling loop
 # =========================
 
-def _ollama_chat(messages: List[dict]) -> dict:
+def _llm_chat(messages: List[dict]) -> dict:
+    provider = LLM_PROVIDER
+
+    if provider in {"openrouter", "openai", "openai_compatible"}:
+        if not LLM_API_KEY:
+            raise HTTPException(
+                status_code=503,
+                detail="LLM_API_KEY or OPENROUTER_API_KEY is not set. Configure a hosted provider or switch LLM_PROVIDER=ollama.",
+            )
+
+        payload = {
+            "model": LLM_MODEL,
+            "messages": messages,
+            "tools": TOOLS,
+            "stream": False,
+            "temperature": 0.2,
+            "max_tokens": LLM_MAX_TOKENS,
+        }
+        headers = {
+            "Authorization": f"Bearer {LLM_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": os.environ.get("APP_HTTP_REFERER", "http://localhost:8000"),
+            "X-Title": os.environ.get("APP_NAME", "LectroHub SOC"),
+        }
+        resp = requests.post(
+            LLM_BASE_URL,
+            headers=headers,
+            json=payload,
+            timeout=LLM_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        choice = (data.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        return {
+            "message": {
+                "role": "assistant",
+                "content": message.get("content") or "",
+                "tool_calls": message.get("tool_calls") or [],
+            }
+        }
+
+    # Fallback to the original local Ollama setup for backward compatibility.
     resp = requests.post(
         f"{OLLAMA_HOST.rstrip('/')}/api/chat",
         json={
@@ -342,8 +393,9 @@ def _ollama_chat(messages: List[dict]) -> dict:
             "messages": messages,
             "tools": TOOLS,
             "stream": False,
+            "options": {"num_ctx": OLLAMA_NUM_CTX},
         },
-        timeout=OLLAMA_TIMEOUT_SECONDS,
+        timeout=LLM_TIMEOUT_SECONDS,
     )
     resp.raise_for_status()
     return resp.json()
@@ -366,6 +418,11 @@ class ChatResponse(BaseModel):
     tool_calls: List[str] = []
 
 
+class ConfirmRequest(BaseModel):
+    tool: str
+    args: Dict[str, Any] = {}
+
+
 @router.post("/chat", response_model=ChatResponse, dependencies=[Depends(get_current_user)])
 def assistant_chat(req: ChatRequest):
     db = get_db()
@@ -386,7 +443,29 @@ def assistant_chat(req: ChatRequest):
     # Tool-calling loop: give the model up to a few rounds to call tools
     # and read the results before producing its final spoken answer.
     for _ in range(5):
-        data = _ollama_chat(messages)
+        try:
+            data = _llm_chat(messages)
+        except HTTPException:
+            raise
+        except requests.exceptions.Timeout as exc:
+            raise HTTPException(
+                status_code=504,
+                detail=(
+                    f"The configured LLM provider did not respond within {LLM_TIMEOUT_SECONDS} seconds. "
+                    f"If you are using Ollama, confirm Ollama is running and OLLAMA_MODEL is valid. "
+                    f"If you are using a hosted provider, verify LLM_API_KEY and LLM_BASE_URL."
+                ),
+            ) from exc
+        except requests.exceptions.RequestException as exc:
+            if LLM_PROVIDER == "ollama":
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Could not reach Ollama at {OLLAMA_HOST}: {exc}",
+                ) from exc
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not reach the configured hosted LLM provider: {exc}",
+            ) from exc
         msg = data.get("message", {})
         tool_calls = msg.get("tool_calls") or []
 
@@ -404,6 +483,24 @@ def assistant_chat(req: ChatRequest):
             raw_args = fn.get("arguments", {})
             args = raw_args if isinstance(raw_args, dict) else json.loads(raw_args or "{}")
 
+            if name == "update_alert_status":
+                status = args.get("status", "")
+                alert_id = args.get("alert_id", "")
+                tool_calls_made.append(name)
+                return ChatResponse(
+                    reply=(
+                        f"I can update alert {alert_id} to '{status}'. "
+                        "Please say or type confirm to continue, or cancel to stop."
+                    ),
+                    action={
+                        "type": "confirm_action",
+                        "tool": name,
+                        "args": args,
+                        "summary": f"Update alert {alert_id} to {status}",
+                    },
+                    tool_calls=tool_calls_made,
+                )
+
             result = _dispatch_tool(db, name, args)
             tool_calls_made.append(name)
 
@@ -412,6 +509,7 @@ def assistant_chat(req: ChatRequest):
 
             messages.append({
                 "role": "tool",
+                "tool_call_id": call.get("id", ""),
                 "content": json.dumps(result, default=str),
             })
 
@@ -420,12 +518,24 @@ def assistant_chat(req: ChatRequest):
         "role": "system",
         "content": "Give your final spoken answer now, in plain sentences, no more tool calls.",
     })
-    data = _ollama_chat(messages)
+    data = _llm_chat(messages) if LLM_PROVIDER in {"openrouter", "openai", "openai_compatible"} else _ollama_chat(messages)
     return ChatResponse(
         reply=data.get("message", {}).get("content", "").strip() or "Done.",
         action=action,
         tool_calls=tool_calls_made,
     )
+
+
+@router.post("/confirm", response_model=Dict[str, Any], dependencies=[Depends(get_current_user)])
+def confirm_assistant_action(req: ConfirmRequest):
+    """Execute a previously proposed write action after explicit analyst approval."""
+    if req.tool != "update_alert_status":
+        raise HTTPException(status_code=400, detail="This assistant action cannot be confirmed.")
+
+    result = _dispatch_tool(get_db(), req.tool, req.args)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Action failed"))
+    return {"reply": f"Alert {result['alert_id']} is now marked {result['status']}.", "ok": True}
 
 
 @router.get("/health")

@@ -36,11 +36,14 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from dotenv import load_dotenv
 import bcrypt
 from jose import jwt, JWTError
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from bson import ObjectId
+
+load_dotenv()
 
 SECRET_KEY = os.environ.get("SIEM_JWT_SECRET", "dev-only-insecure-secret-change-me")
 ALGORITHM = "HS256"

@@ -1,5 +1,8 @@
 import os
+from dotenv import load_dotenv
 from pymongo import MongoClient
+
+load_dotenv()
 
 # Locally: uses your local MongoDB at localhost:27017 by default.
 # On Render: set the MONGODB_URI environment variable to your MongoDB
