@@ -25,6 +25,7 @@ Usage:
 """
 
 import argparse
+import os
 import random
 import time
 import uuid
@@ -33,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 DEFAULT_API_BASE = "http://localhost:8000"
-DEFAULT_API_KEY = "theboywholive"  # match SIEM_API_KEY on the server, or pass --api-key ""
+DEFAULT_API_KEY = os.environ.get("SIEM_API_KEY", "")
 
 CUSTOMER_IP_POOL = [f"81.171.{a}.{b}" for a in range(10, 30) for b in range(10, 30)]
 ADMIN_IPS = ["172.16.0.2", "172.16.0.3"]

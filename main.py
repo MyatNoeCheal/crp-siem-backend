@@ -24,6 +24,7 @@ from network_stream import generate_simulated_network_events
 from mitre_attack import get_mitre_mapping
 from threat_intel import enrich_ip
 from entity_risk import update_entity_risk, get_entity_risk, get_top_risk_entities
+from gnn_inference import score_entity_graph
 import cases as cases_module
 import webhooks as webhooks_module
 import auth
@@ -1739,3 +1740,27 @@ def entity_risk_predictive(entity_type: Optional[str] = None, limit: int = 10,
         min_velocity=min_velocity, alert_threshold=alert_threshold,
     )
     return {"results": results, "count": len(results), "alert_threshold": alert_threshold}
+
+
+# =========================
+# GNN GRAPH RISK — the relational counterpart to entity_risk.py's
+# per-entity UEBA score. Builds the current bipartite IP<->user graph
+# from logs_collection (see build_entity_graph.py) and scores every
+# entity with the trained Graph Autoencoder (see train_gnn_local.py /
+# gnn_inference.py): entities whose local CONNECTIVITY is poorly
+# reconstructed -- an IP suddenly linked to many unrelated accounts, or
+# an account reachable from an unusual number of IPs -- get a high
+# graph_anomaly_score, independent of how risky any single one of their
+# events looked on its own. Complements (does not replace) the Top Risk
+# Entities panel: that one is "how bad has this entity's own activity
+# been over time", this one is "how unusual does this entity's position
+# in the relationship graph look right now".
+#
+# Rebuilds the graph on every request rather than caching a stored
+# score -- same reasoning as gnn_inference.py's module docstring: the
+# whole point of a relational model is that a node's score depends on
+# the CURRENT shape of the graph around it, not just its own history.
+# =========================
+@app.get("/entity-risk/graph", dependencies=[Depends(auth.get_current_user)])
+def entity_risk_graph(top_n: int = 15, scan_limit: int = 20000):
+    return score_entity_graph(scan_limit=scan_limit, top_n=top_n)

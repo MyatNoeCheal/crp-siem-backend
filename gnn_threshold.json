@@ -1,0 +1,26 @@
+{
+  "threshold": 0.11977281421422958,
+  "threshold_percentile": 95,
+  "in_dim": 6,
+  "hidden_dim": 32,
+  "embed_dim": 16,
+  "feature_names": [
+    "event_count_norm",
+    "anomaly_rate",
+    "avg_risk_score_norm",
+    "failed_login_rate",
+    "admin_flag",
+    "degree_norm"
+  ],
+  "node_error_stats": {
+    "mean": 0.09396040439605713,
+    "std": 0.05351701006293297,
+    "min": 0.0,
+    "max": 0.24962148070335388
+  },
+  "training_graph_size": {
+    "nodes": 127,
+    "edges": 66
+  },
+  "note": "Unsupervised model -- no ground-truth fraud-ring/entity-linkage labels exist anywhere in this project's data, so this threshold is a distributional cutoff (95th percentile of node reconstruction error), not F1-optimized. Report this honestly in the Evaluation Framework section, same pattern as lstm_threshold.json's note for the LSTM model."
+}
