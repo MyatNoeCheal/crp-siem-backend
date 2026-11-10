@@ -13,9 +13,11 @@ Usage:
     python wipe_local_demo_data.py
 """
 
+import os
+
 from pymongo import MongoClient
 
-MONGODB_URI = "mongodb://localhost:27017"
+MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
 
 client = MongoClient(MONGODB_URI)
 db = client.crp_siem

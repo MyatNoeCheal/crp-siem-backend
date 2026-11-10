@@ -63,6 +63,7 @@ Requires: pip install requests
 """
 
 import argparse
+import os
 import random
 import time
 from datetime import datetime, timezone
@@ -77,8 +78,11 @@ import requests
 # Override with --local to hit a locally-run backend instead.
 SIEM_API_BASE_LIVE = "https://crp-siem-backend.onrender.com"
 SIEM_API_BASE_LOCAL = "http://localhost:8000"
-SIEM_API_KEY_LIVE = "7777"
-SIEM_API_KEY_LOCAL = "theboywholive"
+# Keys come from the environment -- never hard-code them.
+#   SIEM_API_KEY_LIVE  -> key for the deployed backend
+#   SIEM_API_KEY_LOCAL -> key for a locally-run backend (falls back to SIEM_API_KEY)
+SIEM_API_KEY_LIVE = os.environ.get("SIEM_API_KEY_LIVE", "")
+SIEM_API_KEY_LOCAL = os.environ.get("SIEM_API_KEY_LOCAL") or os.environ.get("SIEM_API_KEY", "")
 
 DEVICES = [
     {"id": "warehouse-temp-sensor-01", "ip": "192.168.10.21"},
@@ -198,6 +202,8 @@ def main():
 
     base_url = SIEM_API_BASE_LOCAL if args.local else SIEM_API_BASE_LIVE
     api_key = SIEM_API_KEY_LOCAL if args.local else SIEM_API_KEY_LIVE
+    if not api_key:
+        raise SystemExit("Set SIEM_API_KEY_LIVE (or SIEM_API_KEY_LOCAL / SIEM_API_KEY with --local) first.")
 
     if args.attack:
         run_attack_mode(base_url, api_key)

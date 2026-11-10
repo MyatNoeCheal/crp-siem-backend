@@ -26,10 +26,9 @@ machine-to-machine ingestion traffic (an e-commerce site posting
 events), a different trust boundary than a human analyst logging into
 the console. The two schemes are not meant to be unified.
 
-SECURITY NOTE: set SIEM_JWT_SECRET before deploying. If it's left unset,
-this falls back to an insecure hardcoded value -- fine for local dev,
-NOT fine for a public deployment (same pattern as SIEM_API_KEY in
-main.py).
+SECURITY NOTE: SIEM_JWT_SECRET is REQUIRED (>= 32 characters). The app
+refuses to start without it -- there is no insecure fallback value. The
+same fail-fast rule applies to SIEM_API_KEY in main.py.
 """
 
 import os
@@ -45,7 +44,13 @@ from bson import ObjectId
 
 load_dotenv()
 
-SECRET_KEY = os.environ.get("SIEM_JWT_SECRET", "dev-only-insecure-secret-change-me")
+SECRET_KEY = os.environ.get("SIEM_JWT_SECRET", "").strip()
+if len(SECRET_KEY) < 32:
+    # Fail fast: never fall back to a publicly known signing secret.
+    raise RuntimeError(
+        "SIEM_JWT_SECRET is missing or too short (need >= 32 characters). "
+        "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 8
 

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from bson import ObjectId
 from typing import Optional, List
 from datetime import datetime, timedelta, timezone
+import hmac
 import os
 import json
 import math
@@ -42,12 +43,21 @@ detector = AnomalyDetector()
 # =========================
 # CORS
 # =========================
-# Add the e-commerce site's domain (and localhost for dev) here.
-# Wildcard "*" is fine for local prototyping but should be replaced
-# with explicit origins before the demo/deployment.
+# Allowed browser origins come from ALLOWED_ORIGINS (comma-separated).
+# Default is local development only; set the deployed frontend URL in
+# production, e.g. ALLOWED_ORIGINS=https://smart-siem-frontend.onrender.com
+# Note: server-to-server callers (LectroHub's PHP) are not affected by CORS.
+_DEFAULT_DEV_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000"
+ALLOWED_ORIGINS = [
+    o.strip().rstrip("/")
+    for o in os.environ.get("ALLOWED_ORIGINS", _DEFAULT_DEV_ORIGINS).split(",")
+    if o.strip()
+]
+if "*" in ALLOWED_ORIGINS:
+    raise RuntimeError("ALLOWED_ORIGINS must list explicit origins; '*' is not allowed.")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # e.g. ["https://your-ecommerce-site.com", "http://localhost:5500"]
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -502,16 +512,19 @@ def _on_startup():
 # Callers must then include this header on protected requests:
 #   X-API-Key: your-secret-key-here
 #
-# If SIEM_API_KEY is not set, protected endpoints are left open — this
-# keeps local development/testing frictionless, but means you MUST set
-# a real key before deploying publicly (e.g. on Render).
-_API_KEY = os.environ.get("SIEM_API_KEY")
+# SIEM_API_KEY is REQUIRED. The app refuses to start without it, so a
+# forgotten variable can never leave ingestion endpoints open.
+_API_KEY = (os.environ.get("SIEM_API_KEY") or "").strip()
+if not _API_KEY:
+    raise RuntimeError(
+        "SIEM_API_KEY is not set. Set it in .env (local) or the host's "
+        "environment settings (e.g. Render) before starting the server."
+    )
 
 
 def require_api_key(x_api_key: Optional[str] = Header(default=None)):
-    if _API_KEY is None:
-        return  # no key configured — open for local dev
-    if x_api_key != _API_KEY:
+    # Constant-time comparison avoids leaking the key through timing.
+    if not x_api_key or not hmac.compare_digest(x_api_key, _API_KEY):
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
 
 
