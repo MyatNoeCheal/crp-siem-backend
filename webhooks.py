@@ -58,7 +58,11 @@ gets logged as a failed delivery instead of retried.
 
 import hashlib
 import hmac
+import ipaddress
 import json
+import os
+import socket
+from urllib.parse import urlparse
 from datetime import datetime
 
 import requests
@@ -96,6 +100,29 @@ def _redact(doc):
 
 
 # =========================
+# URL safety (SSRF protection)
+# =========================
+def validate_webhook_url(url):
+    """Reject webhook targets that would let a caller make the server reach
+    internal services (localhost, private networks, cloud metadata).
+    Set WEBHOOK_ALLOW_PRIVATE=true ONLY for local development/testing."""
+    parsed = urlparse(str(url or ""))
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Webhook URL must be a valid http(s) URL.")
+    if os.environ.get("WEBHOOK_ALLOW_PRIVATE", "").lower() == "true":
+        return
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, parsed.port or 443)
+    except socket.gaierror:
+        raise ValueError("Webhook URL host could not be resolved.")
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            raise ValueError("Webhook URL must not point to a private or internal address.")
+
+
+# =========================
 # Registration / management
 # =========================
 def register_webhook(db, url, events, secret=None, description=None, active=True):
@@ -104,6 +131,7 @@ def register_webhook(db, url, events, secret=None, description=None, active=True
         raise ValueError(f"Unknown event type(s): {sorted(invalid)}. Valid: {sorted(VALID_EVENTS)}")
     if not events:
         raise ValueError("At least one event type is required.")
+    validate_webhook_url(url)
 
     now = _now()
     doc = {
@@ -141,6 +169,9 @@ def update_webhook(db, webhook_id, updates):
         invalid = set(set_fields["events"]) - VALID_EVENTS
         if invalid:
             raise ValueError(f"Unknown event type(s): {sorted(invalid)}. Valid: {sorted(VALID_EVENTS)}")
+
+    if "url" in set_fields:
+        validate_webhook_url(set_fields["url"])
 
     if not set_fields:
         return get_webhook(db, webhook_id)
@@ -198,8 +229,9 @@ def _send(db, webhook, event_type, payload):
         "sent_at": now,
     }
     try:
+        validate_webhook_url(webhook["url"])  # re-check at send time (DNS can change)
         res = requests.post(webhook["url"], data=body_json, headers=headers,
-                             timeout=DELIVERY_TIMEOUT_SECONDS)
+                             timeout=DELIVERY_TIMEOUT_SECONDS, allow_redirects=False)
         result["status_code"] = res.status_code
         result["success"] = 200 <= res.status_code < 300
         result["error"] = None if result["success"] else f"Non-2xx response: {res.status_code}"

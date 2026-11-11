@@ -102,7 +102,22 @@ def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depen
     if credentials is None:
         raise HTTPException(status_code=401, detail="Not authenticated -- missing Authorization header")
     payload = decode_token(credentials.credentials)
-    return {"user_id": payload["sub"], "username": payload["username"], "role": payload["role"]}
+
+    # Re-check the account on every request so that deactivating a user or
+    # changing their role takes effect immediately, not when the token
+    # expires. The role comes from the database, never from the token.
+    try:
+        from database import db as _db
+        user_doc = _db.users.find_one({"_id": ObjectId(payload["sub"])})
+    except Exception:
+        raise HTTPException(status_code=503, detail="Could not verify account")
+    if not user_doc or not user_doc.get("active", True):
+        raise HTTPException(status_code=401, detail="Account disabled or no longer exists")
+    return {
+        "user_id": payload["sub"],
+        "username": user_doc["username"],
+        "role": user_doc["role"],
+    }
 
 
 def require_role(*allowed_roles):

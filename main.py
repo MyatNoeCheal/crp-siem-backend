@@ -1,6 +1,6 @@
 # uvicorn main:app --reload --port 8000
 
-from fastapi import FastAPI, Query, Header, HTTPException, Depends
+from fastapi import FastAPI, Query, Header, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -642,11 +642,33 @@ def health():
 # only analyst-auth endpoints that don't themselves require a valid
 # token (login is how you get one; nothing else here is unauthenticated).
 # =========================
+# Simple in-memory brute-force protection: after MAX_LOGIN_FAILURES wrong
+# passwords for the same (client, username) within LOGIN_WINDOW_SECONDS,
+# further attempts get 429 until the window passes. (Per-process; use a
+# shared store such as Redis if the API is scaled to several instances.)
+MAX_LOGIN_FAILURES = 5
+LOGIN_WINDOW_SECONDS = 15 * 60
+_login_failures = {}
+
+
+def _login_key(request: Request, username: str):
+    return (request.client.host if request.client else "?", username.strip().lower())
+
+
 @app.post("/auth/login")
-def login(payload: LoginRequest):
+def login(payload: LoginRequest, request: Request):
+    key = _login_key(request, payload.username)
+    now_ts = datetime.now(timezone.utc).timestamp()
+    recent = [t for t in _login_failures.get(key, []) if now_ts - t < LOGIN_WINDOW_SECONDS]
+    _login_failures[key] = recent
+    if len(recent) >= MAX_LOGIN_FAILURES:
+        raise HTTPException(status_code=429, detail="Too many failed login attempts. Try again later.")
+
     user = auth.authenticate_user(db, payload.username, payload.password)
     if not user:
+        _login_failures[key].append(now_ts)
         raise HTTPException(status_code=401, detail="Invalid username or password")
+    _login_failures.pop(key, None)
 
     auth.touch_last_login(db, str(user["_id"]))
     token = auth.create_access_token(str(user["_id"]), user["username"], user["role"])
