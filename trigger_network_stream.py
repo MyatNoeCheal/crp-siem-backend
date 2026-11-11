@@ -10,11 +10,12 @@ Usage:
     python trigger_network_stream.py 50      # to insert 50 events instead of 20
 """
 
+import os
 import sys
 import requests
 
 API_BASE = "http://localhost:8000"
-API_KEY = "theboywholive"  # match SIEM_API_KEY on the server, or set to None
+API_KEY = os.environ.get("SIEM_API_KEY", "")  # must match SIEM_API_KEY on the server
 
 HEADERS = {"X-API-Key": API_KEY} if API_KEY else {}
 

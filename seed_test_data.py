@@ -27,7 +27,7 @@ API_BASE = "http://localhost:8000"
 # set it once in your terminal, both uvicorn and this script pick it up
 # automatically. You can also just hardcode a string here instead if
 # you'd rather not deal with environment variables.
-API_KEY = "theboywholive"  # or: API_KEY = "your-secret-key-here"
+API_KEY = os.environ.get("SIEM_API_KEY", "")  # must match SIEM_API_KEY on the server
 
 HEADERS = {"X-API-Key": API_KEY} if API_KEY else {}
 
